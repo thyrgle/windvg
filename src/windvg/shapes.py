@@ -134,6 +134,15 @@ class Shape(ABC):
 
         return Anchor(self, self.project(_as_point(start)), direction)
 
+    def transformed(self, t):
+        """A new shape with the affine transform `t` baked in.
+
+        `t` is a windvg.ext.transform.Transform; see that module for details.
+        """
+        from .ext.transform import transformed
+
+        return transformed(self, t)
+
 
 @dataclass(frozen=True, slots=True)
 class Polygon(Shape):
