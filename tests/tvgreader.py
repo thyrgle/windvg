@@ -65,6 +65,19 @@ def _read_path(reader: Reader, bits: int, scale: int, segments: int) -> list[dic
                         "target": reader.point(bits, scale),
                     }
                 )
+            elif instruction == 5:  # arc ellipse
+                flags = reader.byte()
+                commands.append(
+                    {
+                        "cmd": "arc_ellipse",
+                        "large_arc": flags & 1,
+                        "sweep": (flags >> 1) & 1,
+                        "rx": reader.unit(bits, scale),
+                        "ry": reader.unit(bits, scale),
+                        "rotation": reader.unit(bits, scale),
+                        "target": reader.point(bits, scale),
+                    }
+                )
             elif instruction == 6:  # close path
                 commands.append({"cmd": "close"})
             else:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .shapes import Circle, Polyline
+from .shapes import Arc, Circle, Ellipse, Polyline
 
 if TYPE_CHECKING:
     from .scene import Op, Scene
@@ -22,6 +22,18 @@ def _shape_text(shape) -> str:
     if isinstance(shape, Circle):
         c = f"({_fmt(shape.center.x)},{_fmt(shape.center.y)})"
         return f"circle center={c} r={_fmt(shape.radius)}"
+    if isinstance(shape, Ellipse):
+        c = f"({_fmt(shape.center.x)},{_fmt(shape.center.y)})"
+        text = f"ellipse center={c} rx={_fmt(shape.rx)} ry={_fmt(shape.ry)}"
+        if shape.rotation_deg:
+            text += f" rot={_fmt(shape.rotation_deg)}"
+        return text
+    if isinstance(shape, Arc):
+        c = f"({_fmt(shape.center.x)},{_fmt(shape.center.y)})"
+        return (
+            f"arc center={c} r={_fmt(shape.radius)}"
+            f" start={_fmt(shape.start_deg)} sweep={_fmt(shape.sweep_deg)}"
+        )
     pts = " ".join(f"({_fmt(p.x)},{_fmt(p.y)})" for p in shape.points)
     kind = "polyline" if isinstance(shape, Polyline) else "polygon"
     return f"{kind} [{pts}]"

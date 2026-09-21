@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from tvgreader import parse
 
@@ -6,7 +8,9 @@ from windvg import (
     BLUE,
     CCW,
     CW,
+    Arc,
     Circle,
+    Ellipse,
     Polygon,
     Polyline,
     Scene,
@@ -192,6 +196,55 @@ class TestAnchorDrivenScene:
         parsed = parse(scene.to_tinyvg())
         assert [shape["op"] for shape in parsed["shapes"]] == ["fill", "stroke"]
         assert parsed["colors"] == [(242, 204, 51, 255), (0, 0, 0, 255)]
+
+
+class TestEllipseAndArc:
+    def test_stroke_ellipse_is_arc_ellipse_path(self):
+        scene = Scene(200, 200)
+        ellipse = Ellipse((100, 100), 60, 30, rotation_deg=45)
+        scene.stroke(ellipse, BLACK, width=2.0)
+        parsed = parse(scene.to_tinyvg())
+        segment = parsed["shapes"][0]["paths"][0]
+        start = ellipse.point_at_param(0.0)
+        assert segment["start"] == pytest.approx((start.x, start.y), abs=0.05)
+        arc0, arc1, closing = segment["commands"]
+        for arc in (arc0, arc1):
+            assert arc["cmd"] == "arc_ellipse"
+            assert arc["large_arc"] == 0
+            assert arc["sweep"] == 0
+            assert arc["rx"] == pytest.approx(60, abs=0.05)
+            assert arc["ry"] == pytest.approx(30, abs=0.05)
+            # TinyVG stores rotation with the opposite sign of rotation_deg
+            assert arc["rotation"] == pytest.approx(-45, abs=0.06)
+        mid = ellipse.point_at_param(math.pi)
+        assert arc0["target"] == pytest.approx((mid.x, mid.y), abs=0.05)
+        assert arc1["target"] == pytest.approx((start.x, start.y), abs=0.05)
+        assert closing == {"cmd": "close"}
+
+    def test_fill_ellipse_is_fill_path(self):
+        scene = Scene(200, 200)
+        scene.fill(Ellipse((100, 100), 50, 25), rgb(0, 0, 1))
+        parsed = parse(scene.to_tinyvg())
+        shape = parsed["shapes"][0]
+        assert shape["op"] == "fill"
+        assert shape["paths"][0]["commands"][0]["cmd"] == "arc_ellipse"
+
+    def test_stroke_arc_flags(self):
+        scene = Scene(200, 200)
+        scene.stroke(Arc((100, 100), 50, 0, 200), BLACK, width=1.0)
+        scene.stroke(Arc((100, 100), 30, 0, -90), BLACK, width=1.0)
+        parsed = parse(scene.to_tinyvg())
+        big = parsed["shapes"][0]["paths"][0]["commands"][0]
+        assert big["cmd"] == "arc"
+        assert big["large_arc"] == 1 and big["sweep"] == 0  # 200 deg, clockwise
+        small = parsed["shapes"][1]["paths"][0]["commands"][0]
+        assert small["large_arc"] == 0 and small["sweep"] == 1  # 90 deg, counter-clockwise
+        # open path: no close command
+        assert len(parsed["shapes"][1]["paths"][0]["commands"]) == 1
+
+    def test_cannot_fill_arc(self):
+        with pytest.raises(ValueError):
+            Scene(100, 100).fill(Arc((50, 50), 40, 0, 90), BLACK)
 
 
 class TestInvisibleOps:

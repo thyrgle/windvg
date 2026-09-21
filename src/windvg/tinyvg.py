@@ -4,18 +4,19 @@ Implements the format described at https://tinyvg.tech/specification:
 a fixed-point coordinate system with a configurable number of fraction bits,
 a color lookup table, and a sequence of draw commands terminated by 0x00.
 
-Only flat-colored styles and the RGBA8888 color encoding are emitted; a
-circle is encoded exactly as a fill/stroke path built from two arc-circle
+Only flat-colored styles and the RGBA8888 color encoding are emitted; circles
+and ellipses are encoded exactly as fill/stroke paths built from two arc
 instructions (sweep bit 0 = right turns = visually clockwise on screen).
 """
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from .geometry import Point
 from .scene import OutlineFillOp, StrokeOp
-from .shapes import Circle, Polyline
+from .shapes import Arc, Circle, Ellipse, Polyline
 
 if TYPE_CHECKING:
     from .color import Color
@@ -40,6 +41,7 @@ OUTLINE_FILL_PATH = 10
 STYLE_FLAT = 0
 
 INSTR_ARC_CIRCLE = 4
+INSTR_ARC_ELLIPSE = 5
 INSTR_CLOSE_PATH = 6
 
 
@@ -110,6 +112,20 @@ def _units_needed(ops: list[Op]) -> tuple[float, float]:
             r = shape.radius
             cx, cy = shape.center.x, shape.center.y
             units += [cx - r, cy - r, cx + r, cy + r]
+        elif isinstance(shape, Ellipse):
+            # exact axis-aligned bounds of a rotated ellipse
+            rot = math.radians(shape.rotation_deg)
+            cos_r, sin_r = math.cos(rot), math.sin(rot)
+            ex = math.sqrt((shape.rx * cos_r) ** 2 + (shape.ry * sin_r) ** 2)
+            ey = math.sqrt((shape.rx * sin_r) ** 2 + (shape.ry * cos_r) ** 2)
+            units += [
+                shape.center.x - ex, shape.center.y - ey,
+                shape.center.x + ex, shape.center.y + ey,
+            ]
+        elif isinstance(shape, Arc):
+            for i in range(65):
+                p = shape.point_at_deg(shape.start_deg + shape.sweep_deg * i / 64)
+                units += [p.x, p.y]
         else:
             for pt in shape.points:
                 units += [pt.x, pt.y]
@@ -131,20 +147,57 @@ def _choose_coord_range(ops: list[Op], scale: int) -> int:
     raise ValueError("coordinates do not fit even in 32-bit units; reduce the scale")
 
 
-def _emit_circle_path(writer: _Writer, circle: Circle) -> None:
-    """One path segment: two half arcs, right point -> left point -> right point."""
-    left = Point(circle.center.x - circle.radius, circle.center.y)
-    right = Point(circle.center.x + circle.radius, circle.center.y)
+def _emit_arc_instruction(writer: _Writer, large_arc: bool, sweep_cw: bool) -> None:
+    # flags: large_arc (bit 0), sweep (bit 1); sweep 0 = right turns = CW on screen
+    writer.byte((1 if large_arc else 0) | (0 if sweep_cw else 0b10))
+
+
+def _emit_closed_curve_path(writer: _Writer, shape: Circle | Ellipse) -> None:
+    """One path segment: two half arcs, origin -> opposite point -> origin."""
+    if isinstance(shape, Circle):
+        opposite = Point(shape.center.x - shape.radius, shape.center.y)
+        origin = Point(shape.center.x + shape.radius, shape.center.y)
+        emit_half = _emit_circle_half
+    else:
+        origin = shape.point_at_param(0.0)
+        opposite = shape.point_at_param(math.pi)
+        emit_half = _emit_ellipse_half
     writer.varuint(2)  # command count - 1 (two arcs + close)
-    writer.point(right)
-    for target in (left, right):
-        writer.byte(INSTR_ARC_CIRCLE)
-        # flags: large_arc (bit 0) = 0, sweep (bit 1) = 0.
-        # Sweep 0 means right turns, i.e. visually clockwise in y-down space.
-        writer.byte(0x00)
-        writer.unit(circle.radius)
-        writer.point(target)
+    writer.point(origin)
+    for target in (opposite, origin):
+        emit_half(writer, shape, target)
     writer.byte(INSTR_CLOSE_PATH)
+
+
+def _emit_circle_half(writer: _Writer, circle: Circle, target: Point) -> None:
+    writer.byte(INSTR_ARC_CIRCLE)
+    _emit_arc_instruction(writer, large_arc=False, sweep_cw=True)
+    writer.unit(circle.radius)
+    writer.point(target)
+
+
+def _emit_ellipse_half(writer: _Writer, ellipse: Ellipse, target: Point) -> None:
+    writer.byte(INSTR_ARC_ELLIPSE)
+    _emit_arc_instruction(writer, large_arc=False, sweep_cw=True)
+    writer.unit(ellipse.rx)
+    writer.unit(ellipse.ry)
+    # TinyVG stores rotation in the "mathematical negative direction", i.e.
+    # the opposite sign of our clockwise-on-screen rotation_deg (verified
+    # against the official renderer).
+    writer.unit(-ellipse.rotation_deg)
+    writer.point(target)
+
+
+def _emit_arc_path(writer: _Writer, arc: Arc) -> None:
+    """One open path segment holding a single arc-circle instruction."""
+    writer.varuint(0)  # command count - 1 (one arc)
+    writer.point(arc.start_point)
+    writer.byte(INSTR_ARC_CIRCLE)
+    _emit_arc_instruction(
+        writer, large_arc=abs(arc.sweep_deg) > 180, sweep_cw=arc.sweep_deg > 0
+    )
+    writer.unit(arc.radius)
+    writer.point(arc.end_point)
 
 
 def encode(scene: Scene, scale: int = 4) -> bytes:
@@ -189,23 +242,32 @@ def encode(scene: Scene, scale: int = 4) -> bytes:
         is_outline_fill = isinstance(op, OutlineFillOp)
         is_stroke = isinstance(op, StrokeOp)
 
-        if isinstance(shape, Circle):
+        if isinstance(shape, (Circle, Ellipse)):
             if is_stroke:
                 writer.command(DRAW_LINE_PATH)
                 writer.varuint(0)  # 1 segment (off by one)
                 writer.line_style(fill_index, op.width)
-                _emit_circle_path(writer, shape)
+                _emit_closed_curve_path(writer, shape)
             elif is_outline_fill:
                 writer.command(OUTLINE_FILL_PATH)
                 writer.byte(0)  # 1 segment (u6, off by one) | secondary style kind 0 (u2)
                 writer.fill_style(fill_index)
                 writer.line_style(outline_index, op.width)
-                _emit_circle_path(writer, shape)
+                _emit_closed_curve_path(writer, shape)
             else:
                 writer.command(FILL_PATH)
                 writer.varuint(0)  # 1 segment (off by one)
                 writer.fill_style(fill_index)
-                _emit_circle_path(writer, shape)
+                _emit_closed_curve_path(writer, shape)
+            continue
+
+        if isinstance(shape, Arc):
+            if not is_stroke:
+                raise ValueError("arcs can only be stroked; fill a pie or chord instead")
+            writer.command(DRAW_LINE_PATH)
+            writer.varuint(0)
+            writer.line_style(fill_index, op.width)
+            _emit_arc_path(writer, shape)
             continue
 
         points = list(shape.points)

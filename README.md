@@ -61,11 +61,12 @@ polygon = wv.polygon_from_anchors([(a, 0), (b, 30), (a, 60), (b, 90)])
 | Piece | Purpose |
 | --- | --- |
 | `Point`, `Color`, `rgb`/`rgba` | primitives |
-| `Circle`, `Polygon`, `Polyline` | the shapes |
+| `Circle`, `Ellipse`, `Arc`, `Polygon`, `Polyline` | the shapes |
 | `shape.anchor(start, direction)` | project a point onto the boundary |
 | `anchor.point(pct)`, `anchor.at(pct)` | travel along the track |
+| `anchor.tangent(pct)`, `anchor.offset(pct, d)` | direction of travel; perpendicular displacement (d > 0 = left of travel) |
 | `regular_polygon`, `star`, `star_polygon`, `polygon_from_anchors`, `connect` | builders |
-| `Scene.fill/stroke/outline_fill` | ordered draw operations, flat colors |
+| `Scene.fill/stroke/outline_fill` | ordered draw operations (`visible=False` for guide geometry) |
 | `scene.write_tinyvg(path)` | TinyVG 1.0 binary (`.tvg`) |
 | `scene.write_svg(path)` | minimal SVG for previews |
 | `scene.to_tvgt()` | human-readable debug dump |

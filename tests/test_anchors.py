@@ -3,7 +3,7 @@ import math
 import pytest
 from conftest import assert_pt
 
-from windvg import CCW, CW, Circle, Polygon
+from windvg import CCW, CW, Circle, Ellipse, Polygon
 
 SQ = [(0, 0), (10, 0), (10, 10), (0, 10)]  # visually clockwise vertex order
 
@@ -74,3 +74,40 @@ class TestAnchorSemantics:
     def test_anchor_direction_preserved_through_at(self, circle: Circle):
         base = circle.anchor((120, 100), CCW)
         assert base.at(25).direction is CCW
+
+
+class TestAnchorTangentAndOffset:
+    def test_tangent_follows_anchor_direction(self, circle: Circle):
+        right = circle.anchor((120, 100))
+        assert_pt(right.tangent(0), (0, 1))  # CW: heading down at the right point
+        assert_pt(right.tangent(25), (-1, 0))  # at the bottom, heading left
+        ccw = circle.anchor((120, 100), CCW)
+        assert_pt(ccw.tangent(0), (0, -1))  # CCW: heading up
+
+    def test_tangent_after_travel(self, circle: Circle):
+        anchor = circle.anchor((120, 100), CW)
+        at_bottom = anchor.at(25)
+        assert_pt(at_bottom.point(0), (100, 120))
+        assert_pt(at_bottom.tangent(0), (-1, 0))
+
+    def test_offset_positive_is_outward_for_cw(self, circle: Circle):
+        right = circle.anchor((120, 100), CW)
+        assert_pt(right.offset(0, 5), (125, 100))  # away from center
+        assert_pt(right.offset(0, -5), (115, 100))  # toward center
+
+    def test_offset_is_left_of_travel_so_ccw_flips(self, circle: Circle):
+        # CCW anchors travel the other way, so positive offset points inward
+        top = circle.anchor((100, 80), CCW)  # heading west (-x) at the top
+        assert_pt(top.tangent(0), (-1, 0))
+        assert_pt(top.offset(0, 5), (100, 85))  # left of west is down: inward
+
+    def test_offset_on_polygon_edge(self):
+        square = Polygon(SQ)  # clockwise vertex order
+        top_edge = square.anchor((5, 0), CW)  # traveling +x along the top edge
+        assert_pt(top_edge.tangent(0), (1, 0))
+        assert_pt(top_edge.offset(0, 2), (5, -2))  # above the edge, outside
+
+    def test_tangent_on_ellipse(self):
+        ellipse = Ellipse((0, 0), 20, 10)
+        origin = ellipse.anchor((20, 0), CW)
+        assert_pt(origin.tangent(0), (0, 1))

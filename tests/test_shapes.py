@@ -84,7 +84,9 @@ class TestPolyline:
         assert line.perimeter() == 11
         assert_pt(line.point_at_distance(4), (2.4, 3.2))
         assert_pt(line.point_at_distance(5), (3, 4))
-        assert_pt(line.point_at_distance(11), (0, 0))  # full length wraps to start
+        assert_pt(line.point_at_distance(11), (3, 10))  # open tracks clamp, not wrap
+        assert_pt(line.point_at_distance(99), (3, 10))
+        assert_pt(line.point_at_distance(-3), (0, 0))
 
     def test_not_fillable(self):
         assert Polyline([(0, 0), (1, 1)]).fillable is False

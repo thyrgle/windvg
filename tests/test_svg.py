@@ -1,6 +1,6 @@
 import pytest
 
-from windvg import BLACK, Circle, Polygon, Polyline, Scene, rgba
+from windvg import BLACK, Arc, Circle, Ellipse, Polygon, Polyline, Scene, rgba
 
 
 @pytest.fixture
@@ -44,3 +44,20 @@ def test_invisible_ops_are_omitted(scene: Scene):
     svg = hidden.to_svg()
     assert "<circle" not in svg
     assert '<polygon points="0,0 10,0 0,10"' in svg
+
+
+def test_ellipse_element():
+    scene = Scene(200, 100)
+    scene.stroke(Ellipse((100, 50), 40, 20, rotation_deg=45), BLACK, width=1)
+    svg = scene.to_svg()
+    assert '<ellipse cx="100" cy="50" rx="40" ry="20"' in svg
+    assert 'transform="rotate(45 100 50)"' in svg
+
+
+def test_arc_element():
+    scene = Scene(200, 200)
+    scene.stroke(Arc((100, 100), 50, 0, 200), BLACK, width=2)
+    # end point at 200 degrees: (100 + 50*cos 200, 100 + 50*sin 200)
+    svg = scene.to_svg()
+    assert '<path d="M 150 100 A 50 50 0 1 1 53.015 82.899"' in svg
+    assert 'fill="none"' in svg

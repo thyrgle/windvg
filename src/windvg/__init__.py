@@ -31,12 +31,23 @@ from .color import (
 )
 from .geometry import Point
 from .scene import Scene
-from .shapes import CCW, CW, Circle, Orientation, Polygon, Polyline, Shape
+from .shapes import (
+    CCW,
+    CW,
+    Arc,
+    Circle,
+    Ellipse,
+    Orientation,
+    Polygon,
+    Polyline,
+    Shape,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
     "Anchor",
+    "Arc",
     "BLACK",
     "BLUE",
     "CCW",
@@ -44,6 +55,7 @@ __all__ = [
     "CYAN",
     "Circle",
     "Color",
+    "Ellipse",
     "GRAY",
     "GREEN",
     "MAGENTA",

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .scene import FillOp, OutlineFillOp, StrokeOp
-from .shapes import Circle, Polyline
+from .shapes import Arc, Circle, Ellipse, Polyline
 
 if TYPE_CHECKING:
     from .color import Color
@@ -49,6 +49,25 @@ def _encode_op(op: Op) -> str:
             f'<circle cx="{_fmt(shape.center.x)}" cy="{_fmt(shape.center.y)}"'
             f' r="{_fmt(shape.radius)}"'
         )
+    elif isinstance(shape, Ellipse):
+        base = (
+            f'<ellipse cx="{_fmt(shape.center.x)}" cy="{_fmt(shape.center.y)}"'
+            f' rx="{_fmt(shape.rx)}" ry="{_fmt(shape.ry)}"'
+        )
+        if shape.rotation_deg:
+            base += (
+                f' transform="rotate({_fmt(shape.rotation_deg)}'
+                f' {_fmt(shape.center.x)} {_fmt(shape.center.y)})"'
+            )
+    elif isinstance(shape, Arc):
+        large = 1 if abs(shape.sweep_deg) > 180 else 0
+        sweep = 1 if shape.sweep_deg > 0 else 0
+        d = (
+            f"M {_fmt(shape.start_point.x)} {_fmt(shape.start_point.y)}"
+            f" A {_fmt(shape.radius)} {_fmt(shape.radius)} 0 {large} {sweep}"
+            f" {_fmt(shape.end_point.x)} {_fmt(shape.end_point.y)}"
+        )
+        return f'<path d="{d}" fill="none" {_stroke_attrs(op.color, op.width)}/>'
     elif isinstance(shape, Polyline):
         base = f'<polyline points="{_points_attr(shape.points)}"'
     else:

@@ -27,6 +27,20 @@ class Anchor:
         delta = (pct / 100.0) * self.shape.perimeter() * signed
         return self.shape.point_at_distance(self.start_distance + delta)
 
+    def tangent(self, pct: float = 0.0) -> Point:
+        """Unit vector of travel at `pct`, following the anchor's direction."""
+        signed = self.direction.mult * self.shape.winding_sign
+        return self.shape.tangent_at_distance(self.distance_of(pct)) * signed
+
+    def offset(self, pct: float = 0.0, d: float = 0.0) -> Point:
+        """Point at `pct` displaced perpendicular to travel by `d`.
+
+        Positive `d` moves to the left of the travel direction, which is
+        outward for clockwise tracks and inward for counter-clockwise ones.
+        """
+        t = self.tangent(pct)
+        return self.point(pct) + Point(t.y, -t.x) * d
+
     def at(self, pct: float) -> Anchor:
         """A new anchor whose start is this anchor's position after traveling `pct`."""
         return Anchor(self.shape, self.distance_of(pct), self.direction)
