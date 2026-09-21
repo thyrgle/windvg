@@ -35,3 +35,12 @@ def test_circle_stroke(scene: Scene):
 
 def test_polyline_element(scene: Scene):
     assert '<polyline points="0,0 5,5" fill="none"' in scene.to_svg()
+
+
+def test_invisible_ops_are_omitted(scene: Scene):
+    hidden = Scene(200, 100)
+    hidden.fill(Polygon([(0, 0), (10, 0), (0, 10)]), rgba(1, 0, 0, 0.5))
+    hidden.stroke(Circle((50, 50), 20), BLACK, width=2.5, visible=False)
+    svg = hidden.to_svg()
+    assert "<circle" not in svg
+    assert '<polygon points="0,0 10,0 0,10"' in svg

@@ -148,11 +148,16 @@ def _emit_circle_path(writer: _Writer, circle: Circle) -> None:
 
 
 def encode(scene: Scene, scale: int = 4) -> bytes:
-    """Encode a scene as a TinyVG 1.0 binary file."""
+    """Encode a scene as a TinyVG 1.0 binary file.
+
+    Operations with ``visible=False`` are skipped entirely, as if they were
+    never added.
+    """
     if not 0 <= scale <= 15:
         raise ValueError("scale must fit in 4 bits (0..15)")
 
-    coord_range = _choose_coord_range(scene.ops, scale)
+    ops = [op for op in scene.ops if op.visible]
+    coord_range = _choose_coord_range(ops, scale)
     bits = {COORD_DEFAULT: 16, COORD_ENHANCED: 32}[coord_range]
     writer = _Writer(scale, bits)
 
@@ -170,14 +175,14 @@ def encode(scene: Scene, scale: int = 4) -> bytes:
         writer.buf += value.to_bytes(width_bytes, "little")
 
     # Color table
-    colors = _collect_colors(scene.ops)
+    colors = _collect_colors(ops)
     writer.varuint(len(colors))
     for color in colors:
         writer.buf += bytes(color.rgba8())
 
     # Commands
     index = {color: i for i, color in enumerate(colors)}
-    for op in scene.ops:
+    for op in ops:
         shape = op.shape
         fill_index = index[op.color]
         outline_index = index[getattr(op, "outline_color", op.color)]

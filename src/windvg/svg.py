@@ -66,12 +66,16 @@ def _encode_op(op: Op) -> str:
 
 
 def encode(scene: Scene) -> str:
-    """Encode a scene as an SVG document string."""
+    """Encode a scene as an SVG document string.
+
+    Operations with ``visible=False`` are skipped entirely, as if they were
+    never added.
+    """
     w, h = _fmt(scene.width), _fmt(scene.height)
     header = f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"'
     lines = [
         f'{header} viewBox="0 0 {w} {h}">',
-        *(f"  {_encode_op(op)}" for op in scene.ops),
+        *(f"  {_encode_op(op)}" for op in scene.ops if op.visible),
         "</svg>",
     ]
     return "\n".join(lines) + "\n"

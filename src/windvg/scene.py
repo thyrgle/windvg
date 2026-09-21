@@ -13,6 +13,7 @@ from .shapes import Shape
 class FillOp:
     shape: Shape
     color: Color
+    visible: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,7 @@ class StrokeOp:
     shape: Shape
     color: Color
     width: float
+    visible: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +30,19 @@ class OutlineFillOp:
     color: Color
     outline_color: Color
     width: float
+    visible: bool = True
 
 
 Op = FillOp | StrokeOp | OutlineFillOp
 
 
 class Scene:
-    """An ordered sequence of fill/stroke operations on a fixed-size canvas."""
+    """An ordered sequence of fill/stroke operations on a fixed-size canvas.
+
+    Operations added with ``visible=False`` are kept for inspection but
+    skipped by every exporter, so guide geometry never reaches the output
+    files.
+    """
 
     def __init__(self, width: float, height: float):
         if width <= 0 or height <= 0:
@@ -43,24 +51,31 @@ class Scene:
         self.height = float(height)
         self.ops: list[Op] = []
 
-    def fill(self, shape: Shape, color: Color) -> None:
+    def fill(self, shape: Shape, color: Color, visible: bool = True) -> None:
         if not shape.fillable:
             raise ValueError(f"{type(shape).__name__} cannot be filled")
-        self.ops.append(FillOp(shape, color))
+        self.ops.append(FillOp(shape, color, visible))
 
-    def stroke(self, shape: Shape, color: Color, width: float = 1.0) -> None:
+    def stroke(
+        self, shape: Shape, color: Color, width: float = 1.0, visible: bool = True
+    ) -> None:
         if width < 0:
             raise ValueError("stroke width must be non-negative")
-        self.ops.append(StrokeOp(shape, color, float(width)))
+        self.ops.append(StrokeOp(shape, color, float(width), visible))
 
     def outline_fill(
-        self, shape: Shape, color: Color, outline_color: Color, width: float = 1.0
+        self,
+        shape: Shape,
+        color: Color,
+        outline_color: Color,
+        width: float = 1.0,
+        visible: bool = True,
     ) -> None:
         if not shape.fillable:
             raise ValueError(f"{type(shape).__name__} cannot be filled")
         if width < 0:
             raise ValueError("outline width must be non-negative")
-        self.ops.append(OutlineFillOp(shape, color, outline_color, float(width)))
+        self.ops.append(OutlineFillOp(shape, color, outline_color, float(width), visible))
 
     def to_tinyvg(self, scale: int = 4) -> bytes:
         from .tinyvg import encode

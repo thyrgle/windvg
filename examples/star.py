@@ -18,7 +18,9 @@ pentagram = wv.star_polygon(circle, 5, 2)
 
 scene = wv.Scene(200, 200)
 scene.fill(pentagram, wv.rgb(0.95, 0.8, 0.2))
-scene.stroke(circle, wv.rgb(0.2, 0.2, 0.25), width=1.5)
+# the circle is guide geometry: visible=False keeps it out of the exports,
+# so the output contains just the star (flip to True to see it)
+scene.stroke(circle, wv.rgb(0.2, 0.2, 0.25), width=1.5, visible=False)
 
 # mark where the anchors landed using the anchor API directly
 anchor = circle.anchor(circle.point_at_distance(0.0), wv.CW)

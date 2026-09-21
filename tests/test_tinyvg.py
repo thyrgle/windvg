@@ -194,6 +194,44 @@ class TestAnchorDrivenScene:
         assert parsed["colors"] == [(242, 204, 51, 255), (0, 0, 0, 255)]
 
 
+class TestInvisibleOps:
+    def test_invisible_stroke_is_omitted(self):
+        scene = Scene(100, 100)
+        scene.fill(Polygon([(10, 10), (90, 10), (10, 90)]), BLUE)
+        scene.stroke(Circle((50, 50), 40), BLACK, width=2.0, visible=False)
+        parsed = parse(scene.to_tinyvg())
+        assert [shape["op"] for shape in parsed["shapes"]] == ["fill"]
+        assert parsed["colors"] == [(0, 0, 255, 255)]  # guide color not in table
+
+    def test_invisible_fill_is_omitted(self):
+        scene = Scene(100, 100)
+        scene.fill(Polygon([(10, 10), (90, 10), (10, 90)]), BLUE, visible=False)
+        scene.stroke(Circle((50, 50), 40), BLACK, width=2.0)
+        parsed = parse(scene.to_tinyvg())
+        assert [shape["op"] for shape in parsed["shapes"]] == ["stroke"]
+
+    def test_all_invisible_yields_empty_document(self):
+        scene = Scene(100, 100)
+        scene.fill(Polygon([(10, 10), (90, 10), (10, 90)]), BLUE, visible=False)
+        data = scene.to_tinyvg()
+        assert parse(data)["shapes"] == []
+        assert data == bytes.fromhex("72 56 01 04 64 00 64 00 00 00")
+
+    def test_invisible_ops_do_not_affect_coord_range(self):
+        scene = Scene(10, 10)
+        scene.fill(Polygon([(0, 0), (5, 0), (0, 5)]), BLUE)
+        # far-away geometry, but hidden: must not trigger 32-bit units
+        scene.fill(Polygon([(0, 0), (40000, 0), (0, 40000)]), BLACK, visible=False)
+        parsed = parse(scene.to_tinyvg())
+        assert parsed["coord_range"] == 0
+
+    def test_invisible_ops_stay_in_the_scene(self):
+        scene = Scene(100, 100)
+        scene.stroke(Circle((50, 50), 40), BLACK, visible=False)
+        assert len(scene.ops) == 1
+        assert scene.ops[0].visible is False
+
+
 class TestValidation:
     def test_scale_out_of_range(self):
         with pytest.raises(ValueError):

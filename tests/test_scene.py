@@ -41,3 +41,10 @@ def test_tvgt_dump():
     assert lines[1].startswith("  0: fill    polygon")
     assert "#0000FF" in lines[1]
     assert "w=2" in lines[2]
+
+
+def test_tvgt_dump_marks_hidden_ops():
+    scene = Scene(10, 10)
+    scene.stroke(Circle((5, 5), 2), BLACK, visible=False)
+    line = scene.to_tvgt().splitlines()[1]
+    assert "(hidden)" in line

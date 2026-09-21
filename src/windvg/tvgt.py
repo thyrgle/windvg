@@ -31,20 +31,24 @@ def _op_text(index: int, op: Op) -> str:
     from .scene import FillOp, OutlineFillOp, StrokeOp
 
     color = op.color.hex_rgb()
+    hidden = "" if op.visible else " (hidden)"
     if isinstance(op, FillOp):
-        return f"{index:3d}: fill    {_shape_text(op.shape)} -> {color}"
+        return f"{index:3d}: fill    {_shape_text(op.shape)} -> {color}{hidden}"
     if isinstance(op, StrokeOp):
-        return f"{index:3d}: stroke  {_shape_text(op.shape)} -> {color} w={_fmt(op.width)}"
+        return (
+            f"{index:3d}: stroke  {_shape_text(op.shape)} -> {color}"
+            f" w={_fmt(op.width)}{hidden}"
+        )
     if isinstance(op, OutlineFillOp):
         return (
             f"{index:3d}: o-fill  {_shape_text(op.shape)} -> {color}"
-            f" + {op.outline_color.hex_rgb()} w={_fmt(op.width)}"
+            f" + {op.outline_color.hex_rgb()} w={_fmt(op.width)}{hidden}"
         )
     raise TypeError(f"unknown op type: {type(op).__name__}")
 
 
 def encode(scene: Scene) -> str:
-    """Render a scene as a readable text dump."""
+    """Render a scene as a readable text dump, including hidden operations."""
     header = f"scene {_fmt(scene.width)}x{_fmt(scene.height)}"
     lines = [header, *(_op_text(i, op) for i, op in enumerate(scene.ops))]
     return "\n".join(lines) + "\n"
