@@ -1,0 +1,94 @@
+(tvg 1
+  (200 200 1/16 u8888 default)
+  (
+    (0.949 0.800 0.200)
+    (0.200 0.200 0.251)
+    (0.851 0.251 0.200)
+  )
+  (
+    (
+      fill_polygon
+      (flat 0)
+      (
+        (170 100)
+        (43.375 141.125)
+        (121.625 33.4375)
+        (121.625 166.5625)
+        (43.375 58.875)
+      )
+    )
+    (
+      draw_line_path
+      (flat 1)
+      1.5
+      (
+        (170 100)
+        (
+          (arc_circle - 70 false false (30 100))
+          (arc_circle - 70 false false (170 100))
+          (close -)
+        )
+      )
+    )
+    (
+      fill_path
+      (flat 2)
+      (
+        (173 100)
+        (
+          (arc_circle - 3 false false (167 100))
+          (arc_circle - 3 false false (173 100))
+          (close -)
+        )
+      )
+    )
+    (
+      fill_path
+      (flat 2)
+      (
+        (124.625 166.5625)
+        (
+          (arc_circle - 3 false false (118.625 166.5625))
+          (arc_circle - 3 false false (124.625 166.5625))
+          (close -)
+        )
+      )
+    )
+    (
+      fill_path
+      (flat 2)
+      (
+        (46.375 141.125)
+        (
+          (arc_circle - 3 false false (40.375 141.125))
+          (arc_circle - 3 false false (46.375 141.125))
+          (close -)
+        )
+      )
+    )
+    (
+      fill_path
+      (flat 2)
+      (
+        (46.375 58.875)
+        (
+          (arc_circle - 3 false false (40.375 58.875))
+          (arc_circle - 3 false false (46.375 58.875))
+          (close -)
+        )
+      )
+    )
+    (
+      fill_path
+      (flat 2)
+      (
+        (124.625 33.4375)
+        (
+          (arc_circle - 3 false false (118.625 33.4375))
+          (arc_circle - 3 false false (124.625 33.4375))
+          (close -)
+        )
+      )
+    )
+  )
+)
