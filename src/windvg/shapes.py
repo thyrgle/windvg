@@ -124,6 +124,11 @@ class Shape(ABC):
     def fillable(self) -> bool:
         return True
 
+    @property
+    def closed(self) -> bool:
+        """Whether the track loops: closed tracks wrap distances, open ones clamp."""
+        return True
+
     def anchor(self, start: tuple[float, float] | Point, direction: Orientation = CW):
         """Create an anchor on this shape.
 
@@ -389,6 +394,10 @@ class Arc(Shape):
     def fillable(self) -> bool:
         return False
 
+    @property
+    def closed(self) -> bool:
+        return False
+
 
 @dataclass(frozen=True, slots=True)
 class Polyline(Shape):
@@ -428,4 +437,8 @@ class Polyline(Shape):
 
     @property
     def fillable(self) -> bool:
+        return False
+
+    @property
+    def closed(self) -> bool:
         return False
