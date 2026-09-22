@@ -3,7 +3,9 @@
 Parametric perimeter drawing in pure Python. Draw polygons and circles, place
 **anchors** on their boundaries by traveling a percentage of the perimeter from a
 start point in a chosen winding direction, and export scenes to
-[TinyVG](https://tinyvg.tech) (compact binary vector graphics) or SVG.
+[TinyVG](https://tinyvg.tech) (compact binary vector graphics) or SVG. Draw
+directly with scenes, or edit parametric **Documents** that round-trip to
+readable Python — the layer editors are built on.
 
 ```python
 import windvg as wv
@@ -75,6 +77,54 @@ The core stays small; richer tools live in `windvg.ext`:
 - **`rounded(polygon, radius)`** — exact arc fillets on every corner
   (a fillable `Path`, not a polyline approximation).
 
+## Documents: the editable layer
+
+`Scene` is a flat list of draw ops. `Document` is the parametric, editable
+form: named nodes in a chosen order, each an op over a shape spec with a
+paint. It is the layer editors round-trip through:
+
+```python
+import windvg as wv
+from windvg import document as wvd
+from windvg.document import Document
+
+doc = Document(240, 240)
+doc.grid("grid", origin=(0, 0), cols=6, rows=6, dx=40.0, dy=40.0)
+doc.fill("body", wv.Circle((120, 120), 70), wv.rgb(0.3, 0.55, 0.95))
+doc.fill(
+    "box",
+    wvd.PolySpec(True, [doc.grid_cell("grid", 2, 1), doc.grid_cell("grid", 4, 1),
+                        doc.grid_cell("grid", 4, 3), doc.grid_cell("grid", 2, 3)]),
+    wv.rgb(0.95, 0.8, 0.2),
+)
+doc.fill(
+    "sat",
+    wvd.CircleSpec(doc.anchor("body", pct=12.5), 6),
+    wv.rgb(0.1, 0.1, 0.2),
+)
+
+print(doc.generate_code())   # readable Python — edit it and parse it back
+scene = doc.resolve()        # render like any Scene
+scene.write_svg("drawing.svg")
+```
+
+- **Point references keep drawings parametric.** `doc.anchor(node, pct,
+  direction)` resolves against another node's track; `doc.grid_cell(grid,
+  col, row)` against a grid guide's lattice. Nothing hardcodes the resolved
+  pixel — move the track or retune the grid, and everything referencing them
+  follows.
+- **`doc.grid(name, ...)`** adds an invisible grid guide: a lattice that
+  renders and exports nothing, used for snapping and cell references.
+- **`shape.bbox()`** gives every shape an axis-aligned bounding box
+  (exact for circles/ellipses/arcs, flattened bounds for paths). Resolved
+  document ops carry one too.
+- **`doc.resolve()`** renders to a `Scene`; **`doc.resolve_to_json()`**
+  returns resolved draw ops with node identity and bboxes — what editor
+  canvases draw and hit-test against.
+- **`doc.generate_code()` / `Document.from_code(source)`** round-trip the
+  whole drawing through readable Python, preserving every reference —
+  hand-edit the code, re-execute it, and the document is rebuilt.
+
 ## Paths and holes
 
 `Path` chains line, quadratic, cubic, and arc instructions into one track —
@@ -121,6 +171,12 @@ scene.outline_fill(
 | `scene.write_svg(path)` | SVG with gradients for previews |
 | `scene.to_tvgt()` | human-readable debug dump |
 | `windvg.ext` | transforms, repetition, rounded corners |
+| `Document` + `doc.fill/stroke/outline_fill` | named, ordered, editable nodes |
+| `doc.anchor(node, pct, direction)` | point reference to another node's track |
+| `doc.grid(...)` / `doc.grid_cell(grid, col, row)` | invisible grid guide lattice; cell-coordinate point references |
+| `shape.bbox()` | axis-aligned bounding box |
+| `doc.resolve()` / `doc.resolve_to_json()` | render; resolved ops with node identity and bboxes |
+| `doc.generate_code()` / `Document.from_code` | readable Python code round trip |
 
 ## Examples
 
