@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160" viewBox="0 0 320 160">
+  <defs>
+    <linearGradient id="g0" gradientUnits="userSpaceOnUse" x1="20" y1="20" x2="140" y2="140"><stop offset="0" stop-color="#2666F2"/><stop offset="1" stop-color="#FFBF40"/></linearGradient>
+    <radialGradient id="g1" gradientUnits="userSpaceOnUse" cx="240" cy="80" r="62"><stop offset="0" stop-color="#FFE64C"/><stop offset="1" stop-color="#BF2659"/></radialGradient>
+  </defs>
+  <circle cx="80" cy="80" r="60" fill="url(#g0)"/>
+  <path d="M 289.272 67.272 A 18 18 0 0 1 289.272 92.728 L 252.728 129.272 A 18 18 0 0 1 227.272 129.272 L 190.728 92.728 A 18 18 0 0 1 190.728 67.272 L 227.272 30.728 A 18 18 0 0 1 252.728 30.728 Z" fill-rule="evenodd" fill="url(#g1)" stroke="#1A1A26" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.800"/>
+</svg>

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="g0" gradientUnits="userSpaceOnUse" x1="40" y1="40" x2="200" y2="200"><stop offset="0" stop-color="#4C8CF2"/><stop offset="1" stop-color="#263373"/></linearGradient>
+  </defs>
+  <circle cx="120" cy="120" r="70" fill="url(#g0)"/>
+  <polygon points="206,104 206,136 182,131 182,109" fill="url(#g0)"/>
+  <polygon points="202.478,149.144 186.478,176.856 168.194,160.526 179.194,141.474" fill="url(#g0)"/>
+  <polygon points="176.856,186.478 149.144,202.478 141.474,179.194 160.526,168.194" fill="url(#g0)"/>
+  <polygon points="136,206 104,206 109,182 131,182" fill="url(#g0)"/>
+  <polygon points="90.856,202.478 63.144,186.478 79.474,168.194 98.526,179.194" fill="url(#g0)"/>
+  <polygon points="53.522,176.856 37.522,149.144 60.806,141.474 71.806,160.526" fill="url(#g0)"/>
+  <polygon points="34,136 34,104 58,109 58,131" fill="url(#g0)"/>
+  <polygon points="37.522,90.856 53.522,63.144 71.806,79.474 60.806,98.526" fill="url(#g0)"/>
+  <polygon points="63.144,53.522 90.856,37.522 98.526,60.806 79.474,71.806" fill="url(#g0)"/>
+  <polygon points="104,34 136,34 131,58 109,58" fill="url(#g0)"/>
+  <polygon points="149.144,37.522 176.856,53.522 160.526,71.806 141.474,60.806" fill="url(#g0)"/>
+  <polygon points="186.478,63.144 202.478,90.856 179.194,98.526 168.194,79.474" fill="url(#g0)"/>
+  <path d="M 160 120 A 40 40 0 1 1 80 120 A 40 40 0 1 1 160 120 Z M 138 120 A 18 18 0 1 1 102 120 A 18 18 0 1 1 138 120 Z" fill-rule="evenodd" fill="#1F244C"/>
+  <circle cx="120" cy="120" r="18" fill="#F2CC33"/>
+  <circle cx="188" cy="120" r="6" fill="#F2CC33"/>
+  <circle cx="154" cy="178.89" r="6" fill="#F2CC33"/>
+  <circle cx="86" cy="178.89" r="6" fill="#F2CC33"/>
+  <circle cx="52" cy="120" r="6" fill="#F2CC33"/>
+  <circle cx="86" cy="61.11" r="6" fill="#F2CC33"/>
+  <circle cx="154" cy="61.11" r="6" fill="#F2CC33"/>
+</svg>
