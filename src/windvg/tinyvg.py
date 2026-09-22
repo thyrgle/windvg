@@ -15,8 +15,9 @@ import math
 from typing import TYPE_CHECKING
 
 from .geometry import Point
+from .path import ArcCircle, ArcEllipse, Close, Cubic, Line, Path, Quad
 from .scene import OutlineFillOp, StrokeOp
-from .shapes import Arc, Circle, Ellipse, Polyline
+from .shapes import Arc, Circle, Compound, Ellipse, Polyline
 
 if TYPE_CHECKING:
     from .color import Color
@@ -40,9 +41,14 @@ OUTLINE_FILL_PATH = 10
 
 STYLE_FLAT = 0
 
+INSTR_LINE = 0
 INSTR_ARC_CIRCLE = 4
 INSTR_ARC_ELLIPSE = 5
 INSTR_CLOSE_PATH = 6
+INSTR_CUBIC = 3
+INSTR_QUAD = 7
+
+MAX_OUTLINE_SEGMENTS = 64
 
 
 def write_varuint(value: int) -> bytes:
@@ -107,34 +113,49 @@ def _units_needed(ops: list[Op]) -> tuple[float, float]:
     """Smallest and largest unit values any encoded coordinate or width needs."""
     units: list[float] = []
     for op in ops:
-        shape = op.shape
-        if isinstance(shape, Circle):
-            r = shape.radius
-            cx, cy = shape.center.x, shape.center.y
-            units += [cx - r, cy - r, cx + r, cy + r]
-        elif isinstance(shape, Ellipse):
-            # exact axis-aligned bounds of a rotated ellipse
-            rot = math.radians(shape.rotation_deg)
-            cos_r, sin_r = math.cos(rot), math.sin(rot)
-            ex = math.sqrt((shape.rx * cos_r) ** 2 + (shape.ry * sin_r) ** 2)
-            ey = math.sqrt((shape.rx * sin_r) ** 2 + (shape.ry * cos_r) ** 2)
-            units += [
-                shape.center.x - ex, shape.center.y - ey,
-                shape.center.x + ex, shape.center.y + ey,
-            ]
-        elif isinstance(shape, Arc):
-            for i in range(65):
-                p = shape.point_at_deg(shape.start_deg + shape.sweep_deg * i / 64)
-                units += [p.x, p.y]
-        else:
-            for pt in shape.points:
-                units += [pt.x, pt.y]
+        _collect_shape_units(op.shape, units)
         width = getattr(op, "width", None)
         if width is not None:
             units += [width]
     if not units:
         return 0.0, 0.0
     return min(units), max(units)
+
+
+def _collect_shape_units(shape, units: list[float]) -> None:
+    if isinstance(shape, Compound):
+        for sub in shape.shapes:
+            _collect_shape_units(sub, units)
+    elif isinstance(shape, Path):
+        points = [p for sub in shape._subs for p in sub.chain]
+        pad = shape.tolerance
+        units += [
+            min(p.x for p in points) - pad,
+            min(p.y for p in points) - pad,
+            max(p.x for p in points) + pad,
+            max(p.y for p in points) + pad,
+        ]
+    elif isinstance(shape, Circle):
+        r = shape.radius
+        cx, cy = shape.center.x, shape.center.y
+        units += [cx - r, cy - r, cx + r, cy + r]
+    elif isinstance(shape, Ellipse):
+        # exact axis-aligned bounds of a rotated ellipse
+        rot = math.radians(shape.rotation_deg)
+        cos_r, sin_r = math.cos(rot), math.sin(rot)
+        ex = math.sqrt((shape.rx * cos_r) ** 2 + (shape.ry * sin_r) ** 2)
+        ey = math.sqrt((shape.rx * sin_r) ** 2 + (shape.ry * cos_r) ** 2)
+        units += [
+            shape.center.x - ex, shape.center.y - ey,
+            shape.center.x + ex, shape.center.y + ey,
+        ]
+    elif isinstance(shape, Arc):
+        for i in range(65):
+            p = shape.point_at_deg(shape.start_deg + shape.sweep_deg * i / 64)
+            units += [p.x, p.y]
+    else:
+        for pt in shape.points:
+            units += [pt.x, pt.y]
 
 
 def _choose_coord_range(ops: list[Op], scale: int) -> int:
@@ -162,7 +183,6 @@ def _emit_closed_curve_path(writer: _Writer, shape: Circle | Ellipse) -> None:
         origin = shape.point_at_param(0.0)
         opposite = shape.point_at_param(math.pi)
         emit_half = _emit_ellipse_half
-    writer.varuint(2)  # command count - 1 (two arcs + close)
     writer.point(origin)
     for target in (opposite, origin):
         emit_half(writer, shape, target)
@@ -198,6 +218,202 @@ def _emit_arc_path(writer: _Writer, arc: Arc) -> None:
     )
     writer.unit(arc.radius)
     writer.point(arc.end_point)
+
+
+def _emit_instruction(writer: _Writer, instr) -> None:
+    if isinstance(instr, Line):
+        writer.byte(INSTR_LINE)
+        writer.point(instr.to)
+    elif isinstance(instr, Quad):
+        writer.byte(INSTR_QUAD)
+        writer.point(instr.ctrl)
+        writer.point(instr.to)
+    elif isinstance(instr, Cubic):
+        writer.byte(INSTR_CUBIC)
+        writer.point(instr.c1)
+        writer.point(instr.c2)
+        writer.point(instr.to)
+    elif isinstance(instr, ArcCircle):
+        writer.byte(INSTR_ARC_CIRCLE)
+        _emit_arc_instruction(writer, instr.large, instr.sweep_cw)
+        writer.unit(instr.radius)
+        writer.point(instr.to)
+    elif isinstance(instr, ArcEllipse):
+        writer.byte(INSTR_ARC_ELLIPSE)
+        _emit_arc_instruction(writer, instr.large, instr.sweep_cw)
+        writer.unit(instr.rx)
+        writer.unit(instr.ry)
+        writer.unit(-instr.rotation_deg)  # TinyVG negates rotation
+        writer.point(instr.to)
+    elif isinstance(instr, Close):
+        writer.byte(INSTR_CLOSE_PATH)
+    else:
+        raise TypeError(f"unknown path instruction {type(instr).__name__}")
+
+
+def _emit_polygon_segment_body(writer: _Writer, polygon) -> None:
+    points = list(polygon.points)
+    writer.point(points[0])
+    for pt in points[1:]:
+        writer.byte(INSTR_LINE)
+        writer.point(pt)
+    writer.byte(INSTR_CLOSE_PATH)
+
+
+def _segment_count(shape) -> int:
+    if isinstance(shape, Compound):
+        return sum(_segment_count(sub) for sub in shape.shapes)
+    if isinstance(shape, Path):
+        return len(shape.subpaths)
+    return 1
+
+
+def _emit_segment_lengths(writer: _Writer, shape) -> None:
+    """All segment command counts come first, before any segment bodies."""
+    if isinstance(shape, Compound):
+        for sub in shape.shapes:
+            _emit_segment_lengths(writer, sub)
+    elif isinstance(shape, Path):
+        for sub in shape.subpaths:
+            writer.varuint(len(sub.instructions) - 1)
+    elif isinstance(shape, (Circle, Ellipse)):
+        writer.varuint(2)  # two arcs + close
+    else:
+        writer.varuint(len(shape.points) - 1)  # lines + close
+
+
+def _emit_segment_bodies(writer: _Writer, shape) -> None:
+    if isinstance(shape, Compound):
+        for sub in shape.shapes:
+            _emit_segment_bodies(writer, sub)
+    elif isinstance(shape, Path):
+        for sub in shape.subpaths:
+            writer.point(sub.start)
+            for instr in sub.instructions:
+                _emit_instruction(writer, instr)
+    elif isinstance(shape, (Circle, Ellipse)):
+        _emit_closed_curve_path(writer, shape)
+    else:
+        _emit_polygon_segment_body(writer, shape)
+
+
+def _emit_shape_segments(writer: _Writer, shape) -> None:
+    """Emit the closed path segment(s) that encode one fillable shape."""
+    _emit_segment_lengths(writer, shape)
+    _emit_segment_bodies(writer, shape)
+
+
+def _emit_op(writer: _Writer, op: Op, index: dict) -> None:
+    shape = op.shape
+    fill_index = index[op.color]
+    outline_index = index[getattr(op, "outline_color", op.color)]
+    is_outline_fill = isinstance(op, OutlineFillOp)
+    is_stroke = isinstance(op, StrokeOp)
+
+    if isinstance(shape, Compound):
+        if is_outline_fill:
+            raise ValueError("compound shapes cannot be outline-filled; fill each part")
+        if is_stroke:
+            for sub in shape.shapes:
+                _emit_op(writer, StrokeOp(sub, op.color, op.width), index)
+        else:
+            writer.command(FILL_PATH)
+            writer.varuint(_segment_count(shape) - 1)
+            writer.fill_style(fill_index)
+            _emit_shape_segments(writer, shape)
+        return
+
+    if isinstance(shape, Path):
+        segments = _segment_count(shape)
+        if is_stroke:
+            writer.command(DRAW_LINE_PATH)
+            writer.varuint(segments - 1)
+            writer.line_style(fill_index, op.width)
+            _emit_shape_segments(writer, shape)
+        elif is_outline_fill and segments <= MAX_OUTLINE_SEGMENTS:
+            writer.command(OUTLINE_FILL_PATH)
+            writer.byte(segments - 1)  # count (u6) | secondary style kind (u2)
+            writer.fill_style(fill_index)
+            writer.line_style(outline_index, op.width)
+            _emit_shape_segments(writer, shape)
+        elif is_outline_fill:
+            # too many segments for the combined command; fill and outline apart
+            writer.command(FILL_PATH)
+            writer.varuint(segments - 1)
+            writer.fill_style(fill_index)
+            _emit_shape_segments(writer, shape)
+            writer.command(DRAW_LINE_PATH)
+            writer.varuint(segments - 1)
+            writer.line_style(outline_index, op.width)
+            _emit_shape_segments(writer, shape)
+        else:
+            writer.command(FILL_PATH)
+            writer.varuint(segments - 1)
+            writer.fill_style(fill_index)
+            _emit_shape_segments(writer, shape)
+        return
+
+    if isinstance(shape, (Circle, Ellipse)):
+        if is_stroke:
+            writer.command(DRAW_LINE_PATH)
+            writer.varuint(0)  # 1 segment (off by one)
+            writer.line_style(fill_index, op.width)
+            _emit_shape_segments(writer, shape)
+        elif is_outline_fill:
+            writer.command(OUTLINE_FILL_PATH)
+            writer.byte(0)  # 1 segment (u6, off by one) | secondary style kind 0 (u2)
+            writer.fill_style(fill_index)
+            writer.line_style(outline_index, op.width)
+            _emit_shape_segments(writer, shape)
+        else:
+            writer.command(FILL_PATH)
+            writer.varuint(0)  # 1 segment (off by one)
+            writer.fill_style(fill_index)
+            _emit_shape_segments(writer, shape)
+        return
+
+    if isinstance(shape, Arc):
+        if not is_stroke:
+            raise ValueError("arcs can only be stroked; fill a pie or chord instead")
+        writer.command(DRAW_LINE_PATH)
+        writer.varuint(0)
+        writer.line_style(fill_index, op.width)
+        _emit_arc_path(writer, shape)
+        return
+
+    points = list(shape.points)
+    if is_outline_fill and len(points) > MAX_OUTLINE_SEGMENTS:
+        # Too many points for the combined command; fill and outline separately.
+        passes = ((fill_index, FILL_POLYGON), (outline_index, DRAW_LINE_LOOP))
+        for color_index, cmd in passes:
+            writer.command(cmd)
+            writer.varuint(len(points) - 1)
+            if cmd == FILL_POLYGON:
+                writer.fill_style(color_index)
+            else:
+                writer.line_style(color_index, op.width)
+            for pt in points:
+                writer.point(pt)
+    elif is_stroke:
+        cmd = DRAW_LINE_STRIP if isinstance(shape, Polyline) else DRAW_LINE_LOOP
+        writer.command(cmd)
+        writer.varuint(len(points) - 1)
+        writer.line_style(fill_index, op.width)
+        for pt in points:
+            writer.point(pt)
+    elif is_outline_fill:
+        writer.command(OUTLINE_FILL_POLYGON)
+        writer.byte(len(points) - 1)  # count (u6) | secondary style kind (u2)
+        writer.fill_style(fill_index)
+        writer.line_style(outline_index, op.width)
+        for pt in points:
+            writer.point(pt)
+    else:
+        writer.command(FILL_POLYGON)
+        writer.varuint(len(points) - 1)
+        writer.fill_style(fill_index)
+        for pt in points:
+            writer.point(pt)
 
 
 def encode(scene: Scene, scale: int = 4) -> bytes:
@@ -236,73 +452,7 @@ def encode(scene: Scene, scale: int = 4) -> bytes:
     # Commands
     index = {color: i for i, color in enumerate(colors)}
     for op in ops:
-        shape = op.shape
-        fill_index = index[op.color]
-        outline_index = index[getattr(op, "outline_color", op.color)]
-        is_outline_fill = isinstance(op, OutlineFillOp)
-        is_stroke = isinstance(op, StrokeOp)
-
-        if isinstance(shape, (Circle, Ellipse)):
-            if is_stroke:
-                writer.command(DRAW_LINE_PATH)
-                writer.varuint(0)  # 1 segment (off by one)
-                writer.line_style(fill_index, op.width)
-                _emit_closed_curve_path(writer, shape)
-            elif is_outline_fill:
-                writer.command(OUTLINE_FILL_PATH)
-                writer.byte(0)  # 1 segment (u6, off by one) | secondary style kind 0 (u2)
-                writer.fill_style(fill_index)
-                writer.line_style(outline_index, op.width)
-                _emit_closed_curve_path(writer, shape)
-            else:
-                writer.command(FILL_PATH)
-                writer.varuint(0)  # 1 segment (off by one)
-                writer.fill_style(fill_index)
-                _emit_closed_curve_path(writer, shape)
-            continue
-
-        if isinstance(shape, Arc):
-            if not is_stroke:
-                raise ValueError("arcs can only be stroked; fill a pie or chord instead")
-            writer.command(DRAW_LINE_PATH)
-            writer.varuint(0)
-            writer.line_style(fill_index, op.width)
-            _emit_arc_path(writer, shape)
-            continue
-
-        points = list(shape.points)
-        if is_outline_fill and len(points) > 64:
-            # Too many points for the combined command; fill and outline separately.
-            passes = ((fill_index, FILL_POLYGON), (outline_index, DRAW_LINE_LOOP))
-            for color_index, cmd in passes:
-                writer.command(cmd)
-                writer.varuint(len(points) - 1)
-                if cmd == FILL_POLYGON:
-                    writer.fill_style(color_index)
-                else:
-                    writer.line_style(color_index, op.width)
-                for pt in points:
-                    writer.point(pt)
-        elif is_stroke:
-            cmd = DRAW_LINE_STRIP if isinstance(shape, Polyline) else DRAW_LINE_LOOP
-            writer.command(cmd)
-            writer.varuint(len(points) - 1)
-            writer.line_style(fill_index, op.width)
-            for pt in points:
-                writer.point(pt)
-        elif is_outline_fill:
-            writer.command(OUTLINE_FILL_POLYGON)
-            writer.byte(len(points) - 1)  # count (u6) | secondary style kind (u2)
-            writer.fill_style(fill_index)
-            writer.line_style(outline_index, op.width)
-            for pt in points:
-                writer.point(pt)
-        else:
-            writer.command(FILL_POLYGON)
-            writer.varuint(len(points) - 1)
-            writer.fill_style(fill_index)
-            for pt in points:
-                writer.point(pt)
+        _emit_op(writer, op, index)
 
     writer.byte(END_OF_DOCUMENT)
     return bytes(writer.buf)

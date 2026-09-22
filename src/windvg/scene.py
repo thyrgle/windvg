@@ -71,6 +71,10 @@ class Scene:
         width: float = 1.0,
         visible: bool = True,
     ) -> None:
+        from .shapes import Compound
+
+        if isinstance(shape, Compound):
+            raise ValueError("compound shapes cannot be outline-filled; fill each part")
         if not shape.fillable:
             raise ValueError(f"{type(shape).__name__} cannot be filled")
         if width < 0:

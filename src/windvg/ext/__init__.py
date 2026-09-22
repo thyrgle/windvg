@@ -7,6 +7,7 @@ code, e.g.::
 """
 
 from .repeat import along, grid, polar, sample
+from .rounded import rounded
 from .transform import (
     Transform,
     mirrored_x,
@@ -24,6 +25,7 @@ __all__ = [
     "mirrored_x",
     "mirrored_y",
     "polar",
+    "rounded",
     "rotated",
     "sample",
     "scaled",

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -442,3 +442,43 @@ class Polyline(Shape):
     @property
     def closed(self) -> bool:
         return False
+
+
+@dataclass(frozen=True, slots=True)
+class Compound(Shape):
+    """Several closed shapes filled together under the even-odd rule.
+
+    An inner shape carves a hole out of an outer one. Fill and stroke work;
+    outline fills and track queries are not meaningful and raise.
+    """
+
+    shapes: tuple[Shape, ...]
+
+    def __init__(self, shapes: Sequence[Shape]):
+        subs = tuple(shapes)
+        if not subs:
+            raise ValueError("a compound needs at least one shape")
+        for sub in subs:
+            if not sub.fillable:
+                raise ValueError(f"{type(sub).__name__} is not fillable; no compound")
+        object.__setattr__(self, "shapes", subs)
+
+    def perimeter(self) -> float:
+        return sum(sub.perimeter() for sub in self.shapes)
+
+    def point_at_distance(self, d: float) -> Point:
+        raise NotImplementedError("a Compound has no single track")
+
+    def tangent_at_distance(self, d: float) -> Point:
+        raise NotImplementedError("a Compound has no single track")
+
+    def project(self, pt: Point) -> float:
+        raise NotImplementedError("a Compound has no single track")
+
+    @property
+    def winding_sign(self) -> int:
+        return 1
+
+    @property
+    def closed(self) -> bool:
+        return True

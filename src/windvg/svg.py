@@ -6,10 +6,13 @@ TinyVG remains the primary output format.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
+from .geometry import Point
+from .path import ArcCircle, ArcEllipse, Close, Cubic, Line, Path, Quad
 from .scene import FillOp, OutlineFillOp, StrokeOp
-from .shapes import Arc, Circle, Ellipse, Polyline
+from .shapes import Arc, Circle, Compound, Ellipse, Polyline
 
 if TYPE_CHECKING:
     from .color import Color
@@ -42,8 +45,85 @@ def _stroke_attrs(color: Color, width: float) -> str:
     return attrs
 
 
+def _arc_flags(large: bool, sweep_cw: bool) -> tuple[int, int]:
+    # SVG: large-arc flag as-is; sweep flag 1 = positive angle = CW on screen
+    return (1 if large else 0), (1 if sweep_cw else 0)
+
+
+def _shape_to_d(shape) -> str:
+    """Path-data fragment for one closed shape (Polygon/Circle/Ellipse/Path)."""
+    if isinstance(shape, Path):
+        parts = []
+        for sub in shape.subpaths:
+            parts.append(f"M {_fmt(sub.start.x)} {_fmt(sub.start.y)}")
+            for instr in sub.instructions:
+                if isinstance(instr, Line):
+                    parts.append(f"L {_fmt(instr.to.x)} {_fmt(instr.to.y)}")
+                elif isinstance(instr, Quad):
+                    parts.append(
+                        f"Q {_fmt(instr.ctrl.x)} {_fmt(instr.ctrl.y)}"
+                        f" {_fmt(instr.to.x)} {_fmt(instr.to.y)}"
+                    )
+                elif isinstance(instr, Cubic):
+                    parts.append(
+                        f"C {_fmt(instr.c1.x)} {_fmt(instr.c1.y)}"
+                        f" {_fmt(instr.c2.x)} {_fmt(instr.c2.y)}"
+                        f" {_fmt(instr.to.x)} {_fmt(instr.to.y)}"
+                    )
+                elif isinstance(instr, (ArcCircle, ArcEllipse)):
+                    rx = instr.radius if isinstance(instr, ArcCircle) else instr.rx
+                    ry = instr.radius if isinstance(instr, ArcCircle) else instr.ry
+                    rot = 0 if isinstance(instr, ArcCircle) else instr.rotation_deg
+                    large, sweep = _arc_flags(instr.large, instr.sweep_cw)
+                    parts.append(
+                        f"A {_fmt(rx)} {_fmt(ry)} {_fmt(rot)} {large} {sweep}"
+                        f" {_fmt(instr.to.x)} {_fmt(instr.to.y)}"
+                    )
+                elif isinstance(instr, Close):
+                    parts.append("Z")
+        return " ".join(parts)
+    if isinstance(shape, Circle):
+        left = Point(shape.center.x - shape.radius, shape.center.y)
+        right = Point(shape.center.x + shape.radius, shape.center.y)
+        r = _fmt(shape.radius)
+        return (
+            f"M {_fmt(right.x)} {_fmt(right.y)}"
+            f" A {r} {r} 0 1 1 {_fmt(left.x)} {_fmt(left.y)}"
+            f" A {r} {r} 0 1 1 {_fmt(right.x)} {_fmt(right.y)} Z"
+        )
+    if isinstance(shape, Ellipse):
+        phi = _fmt(shape.rotation_deg)
+        p0 = shape.point_at_param(0.0)
+        p1 = shape.point_at_param(math.pi)
+        rx, ry = _fmt(shape.rx), _fmt(shape.ry)
+        return (
+            f"M {_fmt(p0.x)} {_fmt(p0.y)}"
+            f" A {rx} {ry} {phi} 1 1 {_fmt(p1.x)} {_fmt(p1.y)}"
+            f" A {rx} {ry} {phi} 1 1 {_fmt(p0.x)} {_fmt(p0.y)} Z"
+        )
+    pts = list(shape.points)
+    head = f"M {_fmt(pts[0].x)} {_fmt(pts[0].y)}"
+    body = " ".join(f"L {_fmt(p.x)} {_fmt(p.y)}" for p in pts[1:])
+    return f"{head} {body} Z"
+
+
 def _encode_op(op: Op) -> str:
     shape = op.shape
+    if isinstance(shape, Compound):
+        d = " ".join(_shape_to_d(sub) for sub in shape.shapes)
+        base = f'<path d="{d}" fill-rule="evenodd"'
+        if isinstance(op, FillOp):
+            return f"{base} {_fill_attrs(op.color)}/>"
+        return f'{base} fill="none" {_stroke_attrs(op.color, op.width)}/>'
+    if isinstance(shape, Path):
+        base = f'<path d="{_shape_to_d(shape)}" fill-rule="evenodd"'
+        if isinstance(op, FillOp):
+            return f"{base} {_fill_attrs(op.color)}/>"
+        if isinstance(op, StrokeOp):
+            style = f'fill="none" {_stroke_attrs(op.color, op.width)}'
+            return f"{base} {style}/>"
+        style = f"{_fill_attrs(op.color)} {_stroke_attrs(op.outline_color, op.width)}"
+        return f"{base} {style}/>"
     if isinstance(shape, Circle):
         base = (
             f'<circle cx="{_fmt(shape.center.x)}" cy="{_fmt(shape.center.y)}"'

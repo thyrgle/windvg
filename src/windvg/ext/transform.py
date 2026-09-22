@@ -17,7 +17,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from windvg.geometry import Point
-from windvg.shapes import Arc, Circle, Ellipse, Polygon, Polyline
+from windvg.path import (
+    ArcCircle,
+    ArcEllipse,
+    Close,
+    Cubic,
+    Instruction,
+    Line,
+    Path,
+    Quad,
+    SubPath,
+)
+from windvg.shapes import Arc, Circle, Compound, Ellipse, Polygon, Polyline
 
 if TYPE_CHECKING:
     from windvg.shapes import Shape
@@ -132,8 +143,33 @@ def _ellipse_from_linear(a: float, b: float, c: float, d: float, center: Point) 
     return Ellipse(center, math.sqrt(mean + radius), math.sqrt(mean - radius), rotation_deg)
 
 
+def _local_frame(rx: float, ry: float, rotation_deg: float) -> Transform:
+    """The linear map taking unit-circle space into an ellipse's local frame."""
+    rad = math.radians(rotation_deg)
+    cos_r, sin_r = math.cos(rad), math.sin(rad)
+    return Transform(a=rx * cos_r, b=rx * sin_r, c=-ry * sin_r, d=ry * cos_r)
+
+
+def _transform_arc_params(
+    t: Transform, rx: float, ry: float, rotation_deg: float, sweep_cw: bool, to: Point
+) -> tuple[float, float, float, bool, Point]:
+    """Endpoint-arc parameters after an affine transform.
+
+    Affine maps take ellipses to ellipses and preserve large-arc structure;
+    the sweep flips exactly when the map mirrors (negative determinant).
+    """
+    total = t @ _local_frame(rx, ry, rotation_deg)
+    image = _ellipse_from_linear(total.a, total.b, total.c, total.d, t.apply(to))
+    sweep_flipped = sweep_cw != (t.determinant < 0)
+    return image.rx, image.ry, image.rotation_deg, sweep_flipped, t.apply(to)
+
+
 def transformed(shape: Shape, t: Transform) -> Shape:
     """Bake an affine transform into a new shape."""
+    if isinstance(shape, Compound):
+        return Compound([transformed(sub, t) for sub in shape.shapes])
+    if isinstance(shape, Path):
+        return _transform_path(shape, t)
     if isinstance(shape, Polygon):
         return Polygon([t.apply(p) for p in shape.points])
     if isinstance(shape, Polyline):
@@ -145,25 +181,61 @@ def transformed(shape: Shape, t: Transform) -> Shape:
         r = shape.radius
         return _ellipse_from_linear(t.a * r, t.b * r, t.c * r, t.d * r, center)
     if isinstance(shape, Ellipse):
-        local = Transform(
-            a=shape.rx * math.cos(math.radians(shape.rotation_deg)),
-            b=shape.rx * math.sin(math.radians(shape.rotation_deg)),
-            c=-shape.ry * math.sin(math.radians(shape.rotation_deg)),
-            d=shape.ry * math.cos(math.radians(shape.rotation_deg)),
-        )
-        e = t @ local
+        e = t @ _local_frame(shape.rx, shape.ry, shape.rotation_deg)
         return _ellipse_from_linear(e.a, e.b, e.c, e.d, t.apply(shape.center))
     if isinstance(shape, Arc):
         center = t.apply(shape.center)
-        if not t.is_similarity:
-            raise NotImplementedError(
-                "affine-warped arcs become elliptical arcs; bake them once Path exists"
-            )
+        if t.is_similarity:
+            start = t.apply(shape.start_point)
+            start_deg = math.degrees(math.atan2(start.y - center.y, start.x - center.x))
+            sweep = shape.sweep_deg * (1.0 if t.determinant > 0 else -1.0)
+            return Arc(center, shape.radius * t.scale_factor, start_deg, sweep)
+        rx, ry, rotation, sweep_cw, end = _transform_arc_params(
+            t, shape.radius, shape.radius, 0.0, shape.sweep_deg > 0, shape.end_point
+        )
         start = t.apply(shape.start_point)
-        start_deg = math.degrees(math.atan2(start.y - center.y, start.x - center.x))
-        sweep = shape.sweep_deg * (1.0 if t.determinant > 0 else -1.0)
-        return Arc(center, shape.radius * t.scale_factor, start_deg, sweep)
+        large = abs(shape.sweep_deg) > 180
+        return Path([SubPath(start, (ArcEllipse(rx, ry, rotation, large, sweep_cw, end),))])
     raise TypeError(f"cannot transform {type(shape).__name__}")
+
+
+def _transform_path(path: Path, t: Transform) -> Path:
+    subs: list[SubPath] = []
+    for sub in path.subpaths:
+        instrs: list[Instruction] = []
+        for instr in sub.instructions:
+            if isinstance(instr, Line):
+                instrs.append(Line(t.apply(instr.to)))
+            elif isinstance(instr, Quad):
+                instrs.append(Quad(t.apply(instr.ctrl), t.apply(instr.to)))
+            elif isinstance(instr, Cubic):
+                instrs.append(
+                    Cubic(t.apply(instr.c1), t.apply(instr.c2), t.apply(instr.to))
+                )
+            elif isinstance(instr, ArcCircle):
+                if t.is_similarity:
+                    instrs.append(
+                        ArcCircle(
+                            instr.radius * t.scale_factor,
+                            instr.large,
+                            instr.sweep_cw != (t.determinant < 0),
+                            t.apply(instr.to),
+                        )
+                    )
+                else:
+                    rx, ry, rot, sweep, to = _transform_arc_params(
+                        t, instr.radius, instr.radius, 0.0, instr.sweep_cw, instr.to
+                    )
+                    instrs.append(ArcEllipse(rx, ry, rot, instr.large, sweep, to))
+            elif isinstance(instr, ArcEllipse):
+                rx, ry, rot, sweep, to = _transform_arc_params(
+                    t, instr.rx, instr.ry, instr.rotation_deg, instr.sweep_cw, instr.to
+                )
+                instrs.append(ArcEllipse(rx, ry, rot, instr.large, sweep, to))
+            elif isinstance(instr, Close):
+                instrs.append(Close())
+        subs.append(SubPath(t.apply(sub.start), tuple(instrs)))
+    return Path(subs, path.tolerance)
 
 
 def translated(shape: Shape, dx: float, dy: float) -> Shape:

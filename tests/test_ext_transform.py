@@ -110,9 +110,22 @@ class TestBaking:
         # the start point (20, 0) mirrors to (-20, 0), i.e. angle 180
         assert result.start_deg == pytest.approx(180)
 
-    def test_arc_non_similarity_raises(self):
-        with pytest.raises(NotImplementedError):
-            scaled(Arc((0, 0), 20, 0, 90), 2, 1)
+    def test_arc_non_similarity_becomes_ellipse_path(self):
+        arc = Arc((0, 0), 20, 0, 90)
+        t = Transform.scale(2, 1)
+        result = scaled(arc, 2, 1)
+        # a warped arc is an exact elliptical-arc path now
+        assert type(result).__name__ == "Path"
+        (instr,) = result.subpaths[0].instructions
+        assert type(instr).__name__ == "ArcEllipse"
+        assert instr.rx == pytest.approx(40)  # x axis stretched
+        assert instr.ry == pytest.approx(20)
+        # endpoints map exactly
+        start, end = t.apply(arc.start_point), t.apply(arc.end_point)
+        assert (result.subpaths[0].start.x, result.subpaths[0].start.y) == pytest.approx(
+            (start.x, start.y), abs=1e-9
+        )
+        assert (instr.to.x, instr.to.y) == pytest.approx((end.x, end.y), abs=1e-9)
 
     def test_shape_method_dispatch(self):
         square = regular_polygon((0, 0), 10, 4)

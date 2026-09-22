@@ -40,20 +40,25 @@ class Reader:
 
 
 def _read_path(reader: Reader, bits: int, scale: int, segments: int) -> list[dict]:
+    # all segment lengths come first, then the segments themselves
+    lengths = [reader.varuint() + 1 for _ in range(segments)]
     paths = []
-    for _ in range(segments):
-        count = reader.varuint() + 1
+    for length in lengths:
         start = reader.point(bits, scale)
         commands = []
-        for _ in range(count):
+        for _ in range(length):
             tag = reader.byte()
             instruction = tag & 0b111
-            if tag & 0b1000 or tag >> 5:
-                raise ValueError(f"bad path tag {tag:08b}")
             if tag & 0b10000:
                 reader.unit(bits, scale)  # per-command line width
             if instruction == 0:  # line
                 commands.append({"cmd": "line", "target": reader.point(bits, scale)})
+            elif instruction == 3:  # cubic bezier
+                c1 = reader.point(bits, scale)
+                c2 = reader.point(bits, scale)
+                commands.append(
+                    {"cmd": "cubic", "c1": c1, "c2": c2, "to": reader.point(bits, scale)}
+                )
             elif instruction == 4:  # arc circle
                 flags = reader.byte()
                 commands.append(
@@ -80,6 +85,12 @@ def _read_path(reader: Reader, bits: int, scale: int, segments: int) -> list[dic
                 )
             elif instruction == 6:  # close path
                 commands.append({"cmd": "close"})
+            elif instruction == 7:  # quadratic bezier
+                ctrl = reader.point(bits, scale)
+                commands.append(
+                    {"cmd": "quad", "ctrl": ctrl, "to": reader.point(bits, scale)}
+                )
+
             else:
                 raise ValueError(f"unsupported path instruction {instruction}")
         paths.append({"start": start, "commands": commands})

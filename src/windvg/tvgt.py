@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .shapes import Arc, Circle, Ellipse, Polyline
+from .shapes import Arc, Circle, Compound, Ellipse, Polyline
 
 if TYPE_CHECKING:
     from .scene import Op, Scene
@@ -34,6 +34,13 @@ def _shape_text(shape) -> str:
             f"arc center={c} r={_fmt(shape.radius)}"
             f" start={_fmt(shape.start_deg)} sweep={_fmt(shape.sweep_deg)}"
         )
+    if isinstance(shape, Compound):
+        inner = ", ".join(type(sub).__name__ for sub in shape.shapes)
+        return f"compound[{inner}]"
+    if hasattr(shape, "subpaths"):  # Path
+        counts = [len(sub.instructions) for sub in shape.subpaths]
+        state = "closed" if shape.closed else "open"
+        return f"path {len(shape.subpaths)} subpaths ({state}), instructions {counts}"
     pts = " ".join(f"({_fmt(p.x)},{_fmt(p.y)})" for p in shape.points)
     kind = "polyline" if isinstance(shape, Polyline) else "polygon"
     return f"{kind} [{pts}]"
