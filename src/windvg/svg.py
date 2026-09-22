@@ -9,13 +9,14 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from .color import Color
 from .geometry import Point
+from .gradient import LinearGradient
 from .path import ArcCircle, ArcEllipse, Close, Cubic, Line, Path, Quad
 from .scene import FillOp, OutlineFillOp, StrokeOp
 from .shapes import Arc, Circle, Compound, Ellipse, Polyline
 
 if TYPE_CHECKING:
-    from .color import Color
     from .scene import Op, Scene
 
 
@@ -28,21 +29,62 @@ def _points_attr(points) -> str:
     return " ".join(f"{_fmt(p.x)},{_fmt(p.y)}" for p in points)
 
 
-def _fill_attrs(color: Color) -> str:
-    attrs = f'fill="{color.hex_rgb()}"'
-    if color.a < 1.0:
-        attrs += f' fill-opacity="{color.a:.3f}"'
+def _fill_attrs(paint: Color, ids: dict) -> str:
+    if not isinstance(paint, Color):
+        return f'fill="url(#{ids[paint]})"'
+    attrs = f'fill="{paint.hex_rgb()}"'
+    if paint.a < 1.0:
+        attrs += f' fill-opacity="{paint.a:.3f}"'
     return attrs
 
 
-def _stroke_attrs(color: Color, width: float) -> str:
+def _stroke_attrs(paint: Color, width: float, ids: dict) -> str:
+    if not isinstance(paint, Color):
+        attrs = (
+            f'stroke="url(#{ids[paint]})" stroke-width="{_fmt(width)}"'
+            ' stroke-linecap="round" stroke-linejoin="round"'
+        )
+        return attrs
     attrs = (
-        f'stroke="{color.hex_rgb()}" stroke-width="{_fmt(width)}"'
+        f'stroke="{paint.hex_rgb()}" stroke-width="{_fmt(width)}"'
         ' stroke-linecap="round" stroke-linejoin="round"'
     )
-    if color.a < 1.0:
-        attrs += f' stroke-opacity="{color.a:.3f}"'
+    if paint.a < 1.0:
+        attrs += f' stroke-opacity="{paint.a:.3f}"'
     return attrs
+
+
+def _paints_of(scene: Scene) -> list:
+    paints = []
+    for op in scene.ops:
+        if not op.visible:
+            continue
+        for paint in (getattr(op, "color", None), getattr(op, "outline_color", None)):
+            if paint is not None and not isinstance(paint, Color) and paint not in paints:
+                paints.append(paint)
+    return paints
+
+
+def _gradient_def(paint, grad_id: str) -> str:
+    def stop(color: Color, offset: int) -> str:
+        opacity = "" if color.a >= 1.0 else f' stop-opacity="{color.a:.3f}"'
+        return f'<stop offset="{offset}" stop-color="{color.hex_rgb()}"{opacity}/>'
+
+    if isinstance(paint, LinearGradient):
+        return (
+            f'<linearGradient id="{grad_id}" gradientUnits="userSpaceOnUse"'
+            f' x1="{_fmt(paint.start.x)}" y1="{_fmt(paint.start.y)}"'
+            f' x2="{_fmt(paint.end.x)}" y2="{_fmt(paint.end.y)}">'
+            f"{stop(paint.start_color, 0)}{stop(paint.end_color, 1)}"
+            "</linearGradient>"
+        )
+    radius = math.hypot(paint.edge.x - paint.center.x, paint.edge.y - paint.center.y)
+    return (
+        f'<radialGradient id="{grad_id}" gradientUnits="userSpaceOnUse"'
+        f' cx="{_fmt(paint.center.x)}" cy="{_fmt(paint.center.y)}" r="{_fmt(radius)}">'
+        f"{stop(paint.center_color, 0)}{stop(paint.edge_color, 1)}"
+        "</radialGradient>"
+    )
 
 
 def _arc_flags(large: bool, sweep_cw: bool) -> tuple[int, int]:
@@ -107,23 +149,24 @@ def _shape_to_d(shape) -> str:
     return f"{head} {body} Z"
 
 
-def _encode_op(op: Op) -> str:
+def _encode_op(op: Op, ids: dict) -> str:
     shape = op.shape
     if isinstance(shape, Compound):
         d = " ".join(_shape_to_d(sub) for sub in shape.shapes)
         base = f'<path d="{d}" fill-rule="evenodd"'
         if isinstance(op, FillOp):
-            return f"{base} {_fill_attrs(op.color)}/>"
-        return f'{base} fill="none" {_stroke_attrs(op.color, op.width)}/>'
+            return f"{base} {_fill_attrs(op.color, ids)}/>"
+        return f'{base} fill="none" {_stroke_attrs(op.color, op.width, ids)}/>'
     if isinstance(shape, Path):
         base = f'<path d="{_shape_to_d(shape)}" fill-rule="evenodd"'
         if isinstance(op, FillOp):
-            return f"{base} {_fill_attrs(op.color)}/>"
+            return f"{base} {_fill_attrs(op.color, ids)}/>"
         if isinstance(op, StrokeOp):
-            style = f'fill="none" {_stroke_attrs(op.color, op.width)}'
+            style = f'fill="none" {_stroke_attrs(op.color, op.width, ids)}'
             return f"{base} {style}/>"
-        style = f"{_fill_attrs(op.color)} {_stroke_attrs(op.outline_color, op.width)}"
-        return f"{base} {style}/>"
+        fill = _fill_attrs(op.color, ids)
+        stroke = _stroke_attrs(op.outline_color, op.width, ids)
+        return f"{base} {fill} {stroke}/>"
     if isinstance(shape, Circle):
         base = (
             f'<circle cx="{_fmt(shape.center.x)}" cy="{_fmt(shape.center.y)}"'
@@ -147,20 +190,20 @@ def _encode_op(op: Op) -> str:
             f" A {_fmt(shape.radius)} {_fmt(shape.radius)} 0 {large} {sweep}"
             f" {_fmt(shape.end_point.x)} {_fmt(shape.end_point.y)}"
         )
-        return f'<path d="{d}" fill="none" {_stroke_attrs(op.color, op.width)}/>'
+        return f'<path d="{d}" fill="none" {_stroke_attrs(op.color, op.width, ids)}/>'
     elif isinstance(shape, Polyline):
         base = f'<polyline points="{_points_attr(shape.points)}"'
     else:
         base = f'<polygon points="{_points_attr(shape.points)}"'
 
     if isinstance(op, FillOp):
-        return f"{base} {_fill_attrs(op.color)}/>"
+        return f"{base} {_fill_attrs(op.color, ids)}/>"
     if isinstance(op, StrokeOp):
-        return f'{base} fill="none" {_stroke_attrs(op.color, op.width)}/>'
+        return f'{base} fill="none" {_stroke_attrs(op.color, op.width, ids)}/>'
     if isinstance(op, OutlineFillOp):
-        return (
-            f"{base} {_fill_attrs(op.color)} {_stroke_attrs(op.outline_color, op.width)}/>"
-        )
+        fill = _fill_attrs(op.color, ids)
+        stroke = _stroke_attrs(op.outline_color, op.width, ids)
+        return f"{base} {fill} {stroke}/>"
     raise TypeError(f"unknown op type: {type(op).__name__}")
 
 
@@ -168,13 +211,17 @@ def encode(scene: Scene) -> str:
     """Encode a scene as an SVG document string.
 
     Operations with ``visible=False`` are skipped entirely, as if they were
-    never added.
+    never added. Gradient paints become reusable <defs> gradients.
     """
+    ids = {paint: f"g{i}" for i, paint in enumerate(_paints_of(scene))}
     w, h = _fmt(scene.width), _fmt(scene.height)
     header = f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"'
-    lines = [
-        f'{header} viewBox="0 0 {w} {h}">',
-        *(f"  {_encode_op(op)}" for op in scene.ops if op.visible),
-        "</svg>",
-    ]
+    lines = [f'{header} viewBox="0 0 {w} {h}">']
+    if ids:
+        lines.append("  <defs>")
+        defs = (_gradient_def(paint, gid) for paint, gid in ids.items())
+        lines.extend(f"    {d}" for d in defs)
+        lines.append("  </defs>")
+    lines.extend(f"  {_encode_op(op, ids)}" for op in scene.ops if op.visible)
+    lines.append("</svg>")
     return "\n".join(lines) + "\n"

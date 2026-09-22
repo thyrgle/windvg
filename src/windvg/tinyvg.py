@@ -15,6 +15,7 @@ import math
 from typing import TYPE_CHECKING
 
 from .geometry import Point
+from .gradient import Color, LinearGradient, Paint, RadialGradient, paint_colors
 from .path import ArcCircle, ArcEllipse, Close, Cubic, Line, Path, Quad
 from .scene import OutlineFillOp, StrokeOp
 from .shapes import Arc, Circle, Compound, Ellipse, Polyline
@@ -40,6 +41,8 @@ OUTLINE_FILL_POLYGON = 8
 OUTLINE_FILL_PATH = 10
 
 STYLE_FLAT = 0
+STYLE_LINEAR = 1
+STYLE_RADIAL = 2
 
 INSTR_LINE = 0
 INSTR_ARC_CIRCLE = 4
@@ -92,20 +95,40 @@ class _Writer:
     def command(self, index: int, style_kind: int = STYLE_FLAT) -> None:
         self.byte(index | (style_kind << 6))
 
-    def fill_style(self, color_index: int) -> None:
-        self.varuint(color_index)
+    def paint_style(self, paint: Paint, index: dict) -> int:
+        """Write one style record; returns its style kind for the command byte."""
+        if isinstance(paint, Color):
+            self.varuint(index[paint])
+            return STYLE_FLAT
+        if isinstance(paint, LinearGradient):
+            self.point(paint.start)
+            self.point(paint.end)
+            self.varuint(index[paint.start_color])
+            self.varuint(index[paint.end_color])
+            return STYLE_LINEAR
+        if isinstance(paint, RadialGradient):
+            self.point(paint.center)
+            self.point(paint.edge)
+            self.varuint(index[paint.center_color])
+            self.varuint(index[paint.edge_color])
+            return STYLE_RADIAL
+        raise TypeError(f"unknown paint {type(paint).__name__}")
 
-    def line_style(self, color_index: int, width: float) -> None:
-        self.varuint(color_index)
+    def paint_line_style(self, paint: Paint, index: dict, width: float) -> int:
+        kind = self.paint_style(paint, index)
         self.unit(width)
+        return kind
 
 
 def _collect_colors(ops: list[Op]) -> list[Color]:
     colors: list[Color] = []
     for op in ops:
-        for color in (getattr(op, "color", None), getattr(op, "outline_color", None)):
-            if color is not None and color not in colors:
-                colors.append(color)
+        for paint in (getattr(op, "color", None), getattr(op, "outline_color", None)):
+            if paint is None:
+                continue
+            for color in paint_colors(paint):
+                if color not in colors:
+                    colors.append(color)
     return colors
 
 
@@ -114,6 +137,11 @@ def _units_needed(ops: list[Op]) -> tuple[float, float]:
     units: list[float] = []
     for op in ops:
         _collect_shape_units(op.shape, units)
+        for paint in (getattr(op, "color", None), getattr(op, "outline_color", None)):
+            if isinstance(paint, LinearGradient):
+                units += [paint.start.x, paint.start.y, paint.end.x, paint.end.y]
+            elif isinstance(paint, RadialGradient):
+                units += [paint.center.x, paint.center.y, paint.edge.x, paint.edge.y]
         width = getattr(op, "width", None)
         if width is not None:
             units += [width]
@@ -303,12 +331,20 @@ def _emit_shape_segments(writer: _Writer, shape) -> None:
     _emit_segment_bodies(writer, shape)
 
 
+def _kind_of(paint: Paint) -> int:
+    if isinstance(paint, Color):
+        return STYLE_FLAT
+    if isinstance(paint, LinearGradient):
+        return STYLE_LINEAR
+    return STYLE_RADIAL
+
+
 def _emit_op(writer: _Writer, op: Op, index: dict) -> None:
     shape = op.shape
-    fill_index = index[op.color]
-    outline_index = index[getattr(op, "outline_color", op.color)]
     is_outline_fill = isinstance(op, OutlineFillOp)
     is_stroke = isinstance(op, StrokeOp)
+    fill_kind = _kind_of(op.color)
+    outline_kind = _kind_of(getattr(op, "outline_color", op.color))
 
     if isinstance(shape, Compound):
         if is_outline_fill:
@@ -317,101 +353,104 @@ def _emit_op(writer: _Writer, op: Op, index: dict) -> None:
             for sub in shape.shapes:
                 _emit_op(writer, StrokeOp(sub, op.color, op.width), index)
         else:
-            writer.command(FILL_PATH)
+            writer.command(FILL_PATH, fill_kind)
             writer.varuint(_segment_count(shape) - 1)
-            writer.fill_style(fill_index)
+            writer.paint_style(op.color, index)
             _emit_shape_segments(writer, shape)
         return
 
     if isinstance(shape, Path):
         segments = _segment_count(shape)
         if is_stroke:
-            writer.command(DRAW_LINE_PATH)
+            writer.command(DRAW_LINE_PATH, fill_kind)
             writer.varuint(segments - 1)
-            writer.line_style(fill_index, op.width)
+            writer.paint_line_style(op.color, index, op.width)
             _emit_shape_segments(writer, shape)
         elif is_outline_fill and segments <= MAX_OUTLINE_SEGMENTS:
-            writer.command(OUTLINE_FILL_PATH)
-            writer.byte(segments - 1)  # count (u6) | secondary style kind (u2)
-            writer.fill_style(fill_index)
-            writer.line_style(outline_index, op.width)
+            writer.command(OUTLINE_FILL_PATH, fill_kind)
+            writer.byte((segments - 1) | (outline_kind << 6))
+            writer.paint_style(op.color, index)
+            writer.paint_style(op.outline_color, index)
+            writer.unit(op.width)
             _emit_shape_segments(writer, shape)
         elif is_outline_fill:
             # too many segments for the combined command; fill and outline apart
-            writer.command(FILL_PATH)
+            writer.command(FILL_PATH, fill_kind)
             writer.varuint(segments - 1)
-            writer.fill_style(fill_index)
+            writer.paint_style(op.color, index)
             _emit_shape_segments(writer, shape)
-            writer.command(DRAW_LINE_PATH)
+            writer.command(DRAW_LINE_PATH, outline_kind)
             writer.varuint(segments - 1)
-            writer.line_style(outline_index, op.width)
+            writer.paint_line_style(op.outline_color, index, op.width)
             _emit_shape_segments(writer, shape)
         else:
-            writer.command(FILL_PATH)
+            writer.command(FILL_PATH, fill_kind)
             writer.varuint(segments - 1)
-            writer.fill_style(fill_index)
+            writer.paint_style(op.color, index)
             _emit_shape_segments(writer, shape)
         return
 
     if isinstance(shape, (Circle, Ellipse)):
         if is_stroke:
-            writer.command(DRAW_LINE_PATH)
+            writer.command(DRAW_LINE_PATH, fill_kind)
             writer.varuint(0)  # 1 segment (off by one)
-            writer.line_style(fill_index, op.width)
+            writer.paint_line_style(op.color, index, op.width)
             _emit_shape_segments(writer, shape)
         elif is_outline_fill:
-            writer.command(OUTLINE_FILL_PATH)
-            writer.byte(0)  # 1 segment (u6, off by one) | secondary style kind 0 (u2)
-            writer.fill_style(fill_index)
-            writer.line_style(outline_index, op.width)
+            writer.command(OUTLINE_FILL_PATH, fill_kind)
+            writer.byte(outline_kind << 6)  # 1 segment (u6, off by one) | sec kind (u2)
+            writer.paint_style(op.color, index)
+            writer.paint_style(op.outline_color, index)
+            writer.unit(op.width)
             _emit_shape_segments(writer, shape)
         else:
-            writer.command(FILL_PATH)
+            writer.command(FILL_PATH, fill_kind)
             writer.varuint(0)  # 1 segment (off by one)
-            writer.fill_style(fill_index)
+            writer.paint_style(op.color, index)
             _emit_shape_segments(writer, shape)
         return
 
     if isinstance(shape, Arc):
         if not is_stroke:
             raise ValueError("arcs can only be stroked; fill a pie or chord instead")
-        writer.command(DRAW_LINE_PATH)
+        writer.command(DRAW_LINE_PATH, fill_kind)
         writer.varuint(0)
-        writer.line_style(fill_index, op.width)
+        writer.paint_line_style(op.color, index, op.width)
         _emit_arc_path(writer, shape)
         return
 
     points = list(shape.points)
     if is_outline_fill and len(points) > MAX_OUTLINE_SEGMENTS:
         # Too many points for the combined command; fill and outline separately.
-        passes = ((fill_index, FILL_POLYGON), (outline_index, DRAW_LINE_LOOP))
-        for color_index, cmd in passes:
-            writer.command(cmd)
-            writer.varuint(len(points) - 1)
-            if cmd == FILL_POLYGON:
-                writer.fill_style(color_index)
-            else:
-                writer.line_style(color_index, op.width)
-            for pt in points:
-                writer.point(pt)
+        writer.command(FILL_POLYGON, fill_kind)
+        writer.varuint(len(points) - 1)
+        writer.paint_style(op.color, index)
+        for pt in points:
+            writer.point(pt)
+        writer.command(DRAW_LINE_LOOP, outline_kind)
+        writer.varuint(len(points) - 1)
+        writer.paint_line_style(op.outline_color, index, op.width)
+        for pt in points:
+            writer.point(pt)
     elif is_stroke:
         cmd = DRAW_LINE_STRIP if isinstance(shape, Polyline) else DRAW_LINE_LOOP
-        writer.command(cmd)
+        writer.command(cmd, fill_kind)
         writer.varuint(len(points) - 1)
-        writer.line_style(fill_index, op.width)
+        writer.paint_line_style(op.color, index, op.width)
         for pt in points:
             writer.point(pt)
     elif is_outline_fill:
-        writer.command(OUTLINE_FILL_POLYGON)
-        writer.byte(len(points) - 1)  # count (u6) | secondary style kind (u2)
-        writer.fill_style(fill_index)
-        writer.line_style(outline_index, op.width)
+        writer.command(OUTLINE_FILL_POLYGON, fill_kind)
+        writer.byte((len(points) - 1) | (outline_kind << 6))
+        writer.paint_style(op.color, index)
+        writer.paint_style(op.outline_color, index)
+        writer.unit(op.width)
         for pt in points:
             writer.point(pt)
     else:
-        writer.command(FILL_POLYGON)
+        writer.command(FILL_POLYGON, fill_kind)
         writer.varuint(len(points) - 1)
-        writer.fill_style(fill_index)
+        writer.paint_style(op.color, index)
         for pt in points:
             writer.point(pt)
 

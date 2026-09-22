@@ -30,6 +30,7 @@ from .color import (
     rgba,
 )
 from .geometry import Point
+from .gradient import LinearGradient, RadialGradient
 from .path import (
     ArcCircle,
     ArcEllipse,
@@ -76,6 +77,7 @@ __all__ = [
     "GRAY",
     "GREEN",
     "Line",
+    "LinearGradient",
     "MAGENTA",
     "Orientation",
     "Path",
@@ -84,6 +86,7 @@ __all__ = [
     "Polygon",
     "Polyline",
     "Quad",
+    "RadialGradient",
     "RED",
     "Scene",
     "Shape",

@@ -97,6 +97,17 @@ def _read_path(reader: Reader, bits: int, scale: int, segments: int) -> list[dic
     return paths
 
 
+def _read_style(reader: Reader, kind: int, bits: int, scale: int):
+    """Flat styles decode to a color index; gradients to a dict."""
+    if kind == 0:
+        return reader.varuint()
+    p0 = reader.point(bits, scale)
+    p1 = reader.point(bits, scale)
+    c0, c1 = reader.varuint(), reader.varuint()
+    name = {1: "linear", 2: "radial"}[kind]
+    return {name: {"points": (p0, p1), "colors": (c0, c1)}}
+
+
 def parse(data: bytes) -> dict:
     """Parse a TinyVG file into a plain dict structure for assertions."""
     reader = Reader(data)
@@ -129,7 +140,7 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "fill",
-                    "style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
                     "points": [reader.point(bits, scale) for _ in range(n)],
                 }
             )
@@ -138,7 +149,7 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "fill",
-                    "style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
                     "paths": _read_path(reader, bits, scale, s),
                 }
             )
@@ -147,7 +158,7 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "stroke",
-                    "style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
                     "width": reader.unit(bits, scale),
                     "points": [reader.point(bits, scale) for _ in range(n)],
                 }
@@ -157,7 +168,7 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "stroke",
-                    "style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
                     "width": reader.unit(bits, scale),
                     "points": [reader.point(bits, scale) for _ in range(n)],
                     "strip": True,
@@ -168,7 +179,7 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "stroke",
-                    "style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
                     "width": reader.unit(bits, scale),
                     "paths": _read_path(reader, bits, scale, s),
                 }
@@ -179,8 +190,8 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "outline_fill",
-                    "style": reader.varuint(),
-                    "outline_style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
+                    "outline_style": _read_style(reader, b2 >> 6, bits, scale),
                     "width": reader.unit(bits, scale),
                     "points": [reader.point(bits, scale) for _ in range(n)],
                 }
@@ -191,15 +202,14 @@ def parse(data: bytes) -> dict:
             shapes.append(
                 {
                     "op": "outline_fill",
-                    "style": reader.varuint(),
-                    "outline_style": reader.varuint(),
+                    "style": _read_style(reader, style_kind, bits, scale),
+                    "outline_style": _read_style(reader, b2 >> 6, bits, scale),
                     "width": reader.unit(bits, scale),
                     "paths": _read_path(reader, bits, scale, s),
                 }
             )
         else:
             raise ValueError(f"unsupported command index {index}")
-        _ = style_kind
 
     return {
         "version": version,

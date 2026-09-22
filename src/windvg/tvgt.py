@@ -46,10 +46,20 @@ def _shape_text(shape) -> str:
     return f"{kind} [{pts}]"
 
 
+def _paint_text(paint) -> str:
+    from .gradient import LinearGradient, RadialGradient
+
+    if isinstance(paint, LinearGradient):
+        return f"linear({paint.start_color.hex_rgb()}..{paint.end_color.hex_rgb()})"
+    if isinstance(paint, RadialGradient):
+        return f"radial({paint.center_color.hex_rgb()}..{paint.edge_color.hex_rgb()})"
+    return paint.hex_rgb()
+
+
 def _op_text(index: int, op: Op) -> str:
     from .scene import FillOp, OutlineFillOp, StrokeOp
 
-    color = op.color.hex_rgb()
+    color = _paint_text(op.color)
     hidden = "" if op.visible else " (hidden)"
     if isinstance(op, FillOp):
         return f"{index:3d}: fill    {_shape_text(op.shape)} -> {color}{hidden}"
@@ -61,7 +71,7 @@ def _op_text(index: int, op: Op) -> str:
     if isinstance(op, OutlineFillOp):
         return (
             f"{index:3d}: o-fill  {_shape_text(op.shape)} -> {color}"
-            f" + {op.outline_color.hex_rgb()} w={_fmt(op.width)}{hidden}"
+            f" + {_paint_text(op.outline_color)} w={_fmt(op.width)}{hidden}"
         )
     raise TypeError(f"unknown op type: {type(op).__name__}")
 

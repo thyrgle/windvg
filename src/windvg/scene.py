@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .color import Color
+from .gradient import Paint
 from .shapes import Shape
 
 
@@ -51,13 +52,13 @@ class Scene:
         self.height = float(height)
         self.ops: list[Op] = []
 
-    def fill(self, shape: Shape, color: Color, visible: bool = True) -> None:
+    def fill(self, shape: Shape, color: Paint, visible: bool = True) -> None:
         if not shape.fillable:
             raise ValueError(f"{type(shape).__name__} cannot be filled")
         self.ops.append(FillOp(shape, color, visible))
 
     def stroke(
-        self, shape: Shape, color: Color, width: float = 1.0, visible: bool = True
+        self, shape: Shape, color: Paint, width: float = 1.0, visible: bool = True
     ) -> None:
         if width < 0:
             raise ValueError("stroke width must be non-negative")
@@ -66,8 +67,8 @@ class Scene:
     def outline_fill(
         self,
         shape: Shape,
-        color: Color,
-        outline_color: Color,
+        color: Paint,
+        outline_color: Paint,
         width: float = 1.0,
         visible: bool = True,
     ) -> None:
