@@ -206,6 +206,16 @@ uv run python examples/star.py            # generate example output
 uv run python examples/connect_shapes.py
 ```
 
+## Documentation
+
+Sphinx sources live in `docs/` (MyST Markdown + autodoc, Furo theme):
+
+```bash
+uv sync --group docs
+uv run sphinx-build -b html docs docs/_build
+# open docs/_build/index.html
+```
+
 Rendered `.tvg` files can be previewed with the official tools from
 [tinyvg.tech](https://tinyvg.tech) (`tinyvg render out.tvg out.png`), or just
 open the `.svg` twin in a browser.
