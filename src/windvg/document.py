@@ -711,6 +711,7 @@ class Document:
             if not node.visible:
                 continue
             for shape in resolver.expand(node.shape):
+                lo, hi = shape.bbox()
                 out.append(
                     {
                         "id": node.id,
@@ -723,6 +724,7 @@ class Document:
                             if node.outline_paint is None
                             else _paint_to_dict(node.outline_paint)
                         ),
+                        "bbox": [lo.x, lo.y, hi.x, hi.y],
                     }
                 )
         return out

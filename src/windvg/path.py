@@ -381,6 +381,13 @@ class Path(Shape):
         total = sum(_shoelace(sub.chain) for sub in self._subs if sub.closed)
         return 1 if total >= 0 else -1
 
+    def bbox(self) -> tuple[Point, Point]:
+        pts = [p for sub in self._subs for p in sub.chain]
+        return (
+            Point(min(p.x for p in pts), min(p.y for p in pts)),
+            Point(max(p.x for p in pts), max(p.y for p in pts)),
+        )
+
     def segment_count(self) -> int:
         """How many TinyVG path segments the path encodes as."""
         return len(self.subpaths)

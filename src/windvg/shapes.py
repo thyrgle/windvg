@@ -139,6 +139,27 @@ class Shape(ABC):
 
         return Anchor(self, self.project(_as_point(start)), direction)
 
+    def bbox(self) -> tuple[Point, Point]:
+        """Axis-aligned bounding box as (min corner, max corner), y-down.
+
+        The base implementation samples the track; shapes override with exact
+        analytic bounds where possible.
+        """
+        n = 256
+        p = self.perimeter()
+        pts = [self.point_at_distance(p * i / n) for i in range(n)]
+        return (
+            Point(min(pt.x for pt in pts), min(pt.y for pt in pts)),
+            Point(max(pt.x for pt in pts), max(pt.y for pt in pts)),
+        )
+
+    @staticmethod
+    def _bbox_of(points: Sequence[Point]) -> tuple[Point, Point]:
+        return (
+            Point(min(pt.x for pt in points), min(pt.y for pt in points)),
+            Point(max(pt.x for pt in points), max(pt.y for pt in points)),
+        )
+
     def transformed(self, t):
         """A new shape with the affine transform `t` baked in.
 
@@ -181,6 +202,9 @@ class Polygon(Shape):
     def project(self, pt: Point) -> float:
         return _project_on_chain(_closed_pairs(self.points), pt)
 
+    def bbox(self) -> tuple[Point, Point]:
+        return self._bbox_of(self.points)
+
     @property
     def winding_sign(self) -> int:
         return 1 if self._shoelace(self.points) > 0 else -1
@@ -218,6 +242,13 @@ class Circle(Shape):
         if delta.length() == 0:
             return 0.0
         return (math.atan2(delta.y, delta.x) % (2.0 * math.pi)) * self.radius
+
+    def bbox(self) -> tuple[Point, Point]:
+        r = self.radius
+        return (
+            Point(self.center.x - r, self.center.y - r),
+            Point(self.center.x + r, self.center.y + r),
+        )
 
     @property
     def winding_sign(self) -> int:
@@ -304,6 +335,17 @@ class Ellipse(Shape):
         t = (lo + hi) / 2.0 % (2.0 * math.pi)
         return table.param_to_distance(t)
 
+    def bbox(self) -> tuple[Point, Point]:
+        # Exact bounds of a rotated ellipse.
+        rot = math.radians(self.rotation_deg)
+        c, s = math.cos(rot), math.sin(rot)
+        hw = math.hypot(self.rx * c, self.ry * s)
+        hh = math.hypot(self.rx * s, self.ry * c)
+        return (
+            Point(self.center.x - hw, self.center.y - hh),
+            Point(self.center.x + hw, self.center.y + hh),
+        )
+
     @property
     def winding_sign(self) -> int:
         # Increasing parameter in y-down coordinates runs visually clockwise.
@@ -389,6 +431,18 @@ class Arc(Shape):
             travel = phi_ccw if phi_ccw <= span else (0.0 if near_start else span)
         return abs(travel) / abs(self.sweep_deg) * self.perimeter()
 
+    def bbox(self) -> tuple[Point, Point]:
+        pts = [self.start_point, self.end_point]
+        for deg in (0.0, 90.0, 180.0, 270.0):
+            delta = (deg - self.start_deg) % 360.0
+            if self.sweep_deg > 0:
+                swept = delta <= self.sweep_deg
+            else:
+                swept = (360.0 - delta) % 360.0 <= -self.sweep_deg
+            if swept:
+                pts.append(self.point_at_deg(deg))
+        return self._bbox_of(pts)
+
     @property
     def winding_sign(self) -> int:
         return 1 if self.sweep_deg > 0 else -1
@@ -434,6 +488,9 @@ class Polyline(Shape):
     def project(self, pt: Point) -> float:
         return _project_on_chain(_open_pairs(self.points), pt)
 
+    def bbox(self) -> tuple[Point, Point]:
+        return self._bbox_of(self.points)
+
     @property
     def winding_sign(self) -> int:
         return 1
@@ -477,6 +534,13 @@ class Compound(Shape):
 
     def project(self, pt: Point) -> float:
         raise NotImplementedError("a Compound has no single track")
+
+    def bbox(self) -> tuple[Point, Point]:
+        boxes = [sub.bbox() for sub in self.shapes]
+        return (
+            Point(min(b[0].x for b in boxes), min(b[0].y for b in boxes)),
+            Point(max(b[1].x for b in boxes), max(b[1].y for b in boxes)),
+        )
 
     @property
     def winding_sign(self) -> int:
