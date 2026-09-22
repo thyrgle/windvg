@@ -241,7 +241,10 @@ class Ellipse(Shape):
     _table: ArcLengthTable = field(init=False, repr=False, compare=False)
 
     def __init__(
-        self, center: tuple[float, float] | Point, rx: float, ry: float,
+        self,
+        center: tuple[float, float] | Point,
+        rx: float,
+        ry: float,
         rotation_deg: float = 0.0,
     ):
         if rx <= 0 or ry <= 0:

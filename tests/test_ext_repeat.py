@@ -80,12 +80,8 @@ class TestPolar:
     def test_places_on_circle_at_angles(self):
         motif = Polyline([(0, 0), (1, 0)])
         placed = polar((50, 50), [motif], 4, radius=20, start_deg=90)
-        circle = Circle((50, 50), 20).transformed(
-            Transform.rotate(90, about=(50, 50))
-        )
-        for got, want in zip(
-            (p.points[0] for p in placed), sample(circle, 4), strict=True
-        ):
+        circle = Circle((50, 50), 20).transformed(Transform.rotate(90, about=(50, 50)))
+        for got, want in zip((p.points[0] for p in placed), sample(circle, 4), strict=True):
             assert (got.x, got.y) == pytest.approx((want.x, want.y), abs=1e-9)
 
     def test_tangent_align(self):

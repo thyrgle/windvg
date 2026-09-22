@@ -1,4 +1,3 @@
-
 import pytest
 from tvgreader import parse
 
@@ -42,7 +41,7 @@ class TestTinyVGGradients:
         scene.fill(Circle((100, 100), 60), paint)
         parsed = parse(scene.to_tinyvg())
         style = parsed["shapes"][0]["style"]
-        (name, data), = style.items()
+        ((name, data),) = style.items()
         assert name == "radial"
         pts = [pt for pair in data["points"] for pt in pair]
         assert pts == pytest.approx([100, 100, 160, 100], abs=0.05)
@@ -139,7 +138,7 @@ class TestSVGGradients:
         scene.stroke(Circle((50, 50), 30), paint, width=2.0)
         svg = scene.to_svg()
         assert 'stroke="url(#g0)"' in svg
-        assert "fill=\"none\"" in svg
+        assert 'fill="none"' in svg
 
     def test_no_defs_for_flat_scenes(self):
         scene = Scene(100, 100)

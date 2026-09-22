@@ -199,7 +199,14 @@ class TestRounded:
         instructions = [type(i) for i in soft.subpaths[0].instructions]
         # starts with vertex 0's fillet; close() makes the final straight hop
         assert instructions == [
-            ArcCircle, Line, ArcCircle, Line, ArcCircle, Line, ArcCircle, Close
+            ArcCircle,
+            Line,
+            ArcCircle,
+            Line,
+            ArcCircle,
+            Line,
+            ArcCircle,
+            Close,
         ]
 
     def test_radius_too_large_raises(self):

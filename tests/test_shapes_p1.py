@@ -24,9 +24,7 @@ class TestEllipse:
     def test_track_round_trip(self):
         ellipse = Ellipse((50, 50), 30, 15)
         for d in (0, 10, ellipse.perimeter() / 2, ellipse.perimeter() - 0.1):
-            d2 = ellipse._table.param_to_distance(
-                ellipse._table.distance_to_param(d)
-            )
+            d2 = ellipse._table.param_to_distance(ellipse._table.distance_to_param(d))
             assert d2 == pytest.approx(d, abs=1e-6)
 
     def test_project_finds_nearest_point(self):

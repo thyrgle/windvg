@@ -70,6 +70,75 @@ class Close:
 Instruction = Line | Quad | Cubic | ArcCircle | ArcEllipse | Close
 
 
+def instruction_to_dict(instr: Instruction) -> dict:
+    if isinstance(instr, Line):
+        return {"cmd": "line", "to": [instr.to.x, instr.to.y]}
+    if isinstance(instr, Quad):
+        return {
+            "cmd": "quad",
+            "ctrl": [instr.ctrl.x, instr.ctrl.y],
+            "to": [instr.to.x, instr.to.y],
+        }
+    if isinstance(instr, Cubic):
+        return {
+            "cmd": "cubic",
+            "c1": [instr.c1.x, instr.c1.y],
+            "c2": [instr.c2.x, instr.c2.y],
+            "to": [instr.to.x, instr.to.y],
+        }
+    if isinstance(instr, ArcCircle):
+        return {
+            "cmd": "arc_circle",
+            "radius": instr.radius,
+            "large": instr.large,
+            "sweep_cw": instr.sweep_cw,
+            "to": [instr.to.x, instr.to.y],
+        }
+    if isinstance(instr, ArcEllipse):
+        return {
+            "cmd": "arc_ellipse",
+            "rx": instr.rx,
+            "ry": instr.ry,
+            "rotation_deg": instr.rotation_deg,
+            "large": instr.large,
+            "sweep_cw": instr.sweep_cw,
+            "to": [instr.to.x, instr.to.y],
+        }
+    if isinstance(instr, Close):
+        return {"cmd": "close"}
+    raise TypeError(f"cannot serialize instruction {type(instr).__name__}")
+
+
+def instruction_from_dict(d: dict) -> Instruction:
+    cmd = d["cmd"]
+    if cmd == "line":
+        return Line(Point(d["to"][0], d["to"][1]))
+    if cmd == "quad":
+        return Quad(Point(d["ctrl"][0], d["ctrl"][1]), Point(d["to"][0], d["to"][1]))
+    if cmd == "cubic":
+        return Cubic(
+            Point(d["c1"][0], d["c1"][1]),
+            Point(d["c2"][0], d["c2"][1]),
+            Point(d["to"][0], d["to"][1]),
+        )
+    if cmd == "arc_circle":
+        return ArcCircle(
+            d["radius"], d["large"], d["sweep_cw"], Point(d["to"][0], d["to"][1])
+        )
+    if cmd == "arc_ellipse":
+        return ArcEllipse(
+            d["rx"],
+            d["ry"],
+            d["rotation_deg"],
+            d["large"],
+            d["sweep_cw"],
+            Point(d["to"][0], d["to"][1]),
+        )
+    if cmd == "close":
+        return Close()
+    raise ValueError(f"unknown instruction {cmd}")
+
+
 @dataclass(frozen=True, slots=True)
 class SubPath:
     start: Point
@@ -177,14 +246,28 @@ def _flatten_subpath(sub: SubPath, tol: float) -> list[Point]:
             current = instr.to
         elif isinstance(instr, ArcCircle):
             _flatten_arc(
-                chain, instr.radius, instr.radius, 0.0,
-                instr.large, instr.sweep_cw, current, instr.to, tol,
+                chain,
+                instr.radius,
+                instr.radius,
+                0.0,
+                instr.large,
+                instr.sweep_cw,
+                current,
+                instr.to,
+                tol,
             )
             current = instr.to
         elif isinstance(instr, ArcEllipse):
             _flatten_arc(
-                chain, instr.rx, instr.ry, instr.rotation_deg,
-                instr.large, instr.sweep_cw, current, instr.to, tol,
+                chain,
+                instr.rx,
+                instr.ry,
+                instr.rotation_deg,
+                instr.large,
+                instr.sweep_cw,
+                current,
+                instr.to,
+                tol,
             )
             current = instr.to
         elif isinstance(instr, Close):
@@ -302,6 +385,29 @@ class Path(Shape):
         """How many TinyVG path segments the path encodes as."""
         return len(self.subpaths)
 
+    def to_dict(self) -> dict:
+        return {
+            "kind": "path",
+            "subpaths": [
+                {
+                    "start": [sub.start.x, sub.start.y],
+                    "instructions": [instruction_to_dict(i) for i in sub.instructions],
+                }
+                for sub in self.subpaths
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Path:
+        subs = tuple(
+            SubPath(
+                Point(sub["start"][0], sub["start"][1]),
+                tuple(instruction_from_dict(i) for i in sub["instructions"]),
+            )
+            for sub in d["subpaths"]
+        )
+        return cls(subs)
+
 
 def _coerce_point(pt: tuple[float, float] | Point) -> Point:
     return _as_point(pt)
@@ -310,13 +416,13 @@ def _coerce_point(pt: tuple[float, float] | Point) -> Point:
 class PathBuilder:
     """Fluent constructor for Paths, one subpath at a time.
 
-        path = (
-            PathBuilder((10, 10))
-            .line_to((90, 10))
-            .arc_circle_to(20, (90, 50), sweep_cw=True)
-            .close()
-            .build()
-        )
+    path = (
+        PathBuilder((10, 10))
+        .line_to((90, 10))
+        .arc_circle_to(20, (90, 50), sweep_cw=True)
+        .close()
+        .build()
+    )
     """
 
     def __init__(self, start: tuple[float, float] | Point):

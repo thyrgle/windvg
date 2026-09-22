@@ -36,9 +36,9 @@ An anchor fixes a start location plus a direction:
 
 ```python
 anchor = circle.anchor(start=(160, 100), direction=wv.CW)
-pt = anchor.point(25)        # 25% of the perimeter, clockwise from start
-pt = anchor.point(150)       # >100% wraps around via modulo
-same = anchor.point(-20)     # negative travels backwards
+pt = anchor.point(25)  # 25% of the perimeter, clockwise from start
+pt = anchor.point(150)  # >100% wraps around via modulo
+same = anchor.point(-20)  # negative travels backwards
 ```
 
 The start point can be *any* (x, y) — it is projected to the nearest location on
@@ -51,7 +51,7 @@ Anchors work across shapes, which is where it gets fun:
 ```python
 a = square.anchor((70, 50), wv.CW)
 b = circle.anchor((160, 135), wv.CCW)
-chord = wv.connect((a, 25), (b, 60))   # square@25% to circle@60%
+chord = wv.connect((a, 25), (b, 60))  # square@25% to circle@60%
 scene.stroke(chord, wv.BLACK, width=2.0)
 polygon = wv.polygon_from_anchors([(a, 0), (b, 30), (a, 60), (b, 90)])
 ```
@@ -99,7 +99,9 @@ scene.fill(
 )
 scene.outline_fill(
     square,
-    wv.RadialGradient(square_center, top_edge, wv.rgb(1, 0.9, 0.3), wv.rgb(0.75, 0.15, 0.35)),
+    wv.RadialGradient(
+        square_center, top_edge, wv.rgb(1, 0.9, 0.3), wv.rgb(0.75, 0.15, 0.35)
+    ),
     wv.BLACK,
 )
 ```

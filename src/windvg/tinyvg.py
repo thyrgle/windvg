@@ -174,8 +174,10 @@ def _collect_shape_units(shape, units: list[float]) -> None:
         ex = math.sqrt((shape.rx * cos_r) ** 2 + (shape.ry * sin_r) ** 2)
         ey = math.sqrt((shape.rx * sin_r) ** 2 + (shape.ry * cos_r) ** 2)
         units += [
-            shape.center.x - ex, shape.center.y - ey,
-            shape.center.x + ex, shape.center.y + ey,
+            shape.center.x - ex,
+            shape.center.y - ey,
+            shape.center.x + ex,
+            shape.center.y + ey,
         ]
     elif isinstance(shape, Arc):
         for i in range(65):
