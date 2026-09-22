@@ -10,10 +10,11 @@ Python source — the round trip editors need:
       ▲                            │
       └──────generate_code─────────┘
 
-Points inside specs may be literal [x, y] pairs or anchor references:
+Points inside specs may be literal [x, y] pairs or parametric references:
 {"anchor": {"node": "gear", "pct": 25, "direction": "cw"}} — resolved against
-another node's shape when the document resolves, so visual edits to pct stay
-parametric.
+another node's shape — or {"grid_cell": {"node": "grid1", "col": 1, "row": 0}}
+— resolved against a grid guide's lattice. References keep visual edits
+parametric: the generated code never hardcodes resolved pixel positions.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import itertools
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from .color import Color
+from .color import BLACK, Color
 from .geometry import Point
 from .gradient import LinearGradient, RadialGradient
 from .path import (
@@ -41,6 +42,8 @@ __all__ = [
     "CompoundSpec",
     "Document",
     "EllipseSpec",
+    "GridCellPoint",
+    "GridGuideSpec",
     "GridSpec",
     "Node",
     "PathSpec",
@@ -91,8 +94,40 @@ class AnchorPoint:
         )
 
 
-def _point_to_dict(pt: Point | AnchorPoint) -> list | dict:
-    if isinstance(pt, AnchorPoint):
+@dataclass(frozen=True, slots=True)
+class GridCellPoint:
+    """A point expressed in another node's grid-guide cell coordinates.
+
+    Resolves to the referenced grid's ``origin + (col * dx, row * dy)``, plus
+    ``offset`` when given, so a shape can snap to cell (1, 0) while staying
+    parametric — the generated code never hardcodes the pixel position.
+    """
+
+    node: str
+    col: int
+    row: int
+    offset: Point | None = None
+
+    def to_dict(self) -> dict:
+        payload: dict = {"node": self.node, "col": self.col, "row": self.row}
+        if self.offset is not None:
+            payload["offset"] = [self.offset.x, self.offset.y]
+        return {"grid_cell": payload}
+
+    @staticmethod
+    def from_dict(d: dict) -> GridCellPoint:
+        payload = d["grid_cell"]
+        offset = payload.get("offset")
+        return GridCellPoint(
+            node=payload["node"],
+            col=int(payload["col"]),
+            row=int(payload["row"]),
+            offset=None if offset is None else Point(offset[0], offset[1]),
+        )
+
+
+def _point_to_dict(pt) -> list | dict:
+    if isinstance(pt, (AnchorPoint, GridCellPoint)):
         return pt.to_dict()
     if isinstance(pt, Point):
         return [pt.x, pt.y]
@@ -103,9 +138,13 @@ def _point_to_dict(pt: Point | AnchorPoint) -> list | dict:
     raise TypeError(f"cannot serialize point {pt!r}")
 
 
-def _point_from_dict(d: list | dict) -> Point | AnchorPoint:
+def _point_from_dict(d: list | dict):
     if isinstance(d, dict):
-        return AnchorPoint.from_dict(d)
+        if "anchor" in d:
+            return AnchorPoint.from_dict(d)
+        if "grid_cell" in d:
+            return GridCellPoint.from_dict(d)
+        raise ValueError(f"unknown point reference {sorted(d)!r}")
     return Point(d[0], d[1])
 
 
@@ -277,6 +316,21 @@ class GridSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class GridGuideSpec:
+    """A non-drawing lattice used for snapping and grid-cell references.
+
+    Expands to no shapes, so a grid-guide node renders and exports nothing;
+    ``grid_cell`` point references resolve against its origin and spacing.
+    """
+
+    origin: object = (0.0, 0.0)
+    cols: int = 8
+    rows: int = 6
+    dx: float = 40.0
+    dy: float = 40.0
+
+
+@dataclass(frozen=True, slots=True)
 class RoundedSpec:
     shape: object
     radius: float
@@ -298,11 +352,25 @@ class _Resolver:
 
     def resolve_point(self, pt) -> Point:
         if isinstance(pt, dict):
-            pt = AnchorPoint.from_dict(pt)
+            pt = _point_from_dict(pt)
         if isinstance(pt, AnchorPoint):
             shape = self.first_shape_of(pt.node)
             hint = pt.start if pt.start is not None else shape.point_at_distance(0.0)
             return shape.anchor(hint, pt.direction).point(pt.pct)
+        if isinstance(pt, GridCellPoint):
+            node = self.document.get(pt.node)
+            grid = (
+                _spec_from_dict(node.shape) if isinstance(node.shape, dict) else node.shape
+            )
+            if not isinstance(grid, GridGuideSpec):
+                raise ValueError(f"node {pt.node!r} is not a grid guide")
+            origin = grid.origin
+            if not isinstance(origin, Point):
+                origin = Point(origin[0], origin[1])
+            p = Point(origin.x + pt.col * grid.dx, origin.y + pt.row * grid.dy)
+            if pt.offset is not None:
+                p = p + pt.offset
+            return p
         if isinstance(pt, Point):
             return pt
         if isinstance(pt, (list, tuple)):
@@ -316,6 +384,8 @@ class _Resolver:
             return [spec]
         if isinstance(spec, dict):
             spec = _spec_from_dict(spec)
+        if isinstance(spec, GridGuideSpec):
+            return []
         if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec)):
             return [self._atomic_shape(spec)]
         if isinstance(spec, PolySpec):
@@ -508,6 +578,15 @@ def _spec_to_dict(spec) -> dict:
             "dy": spec.dy,
             "origin": _point_to_dict(spec.origin),
         }
+    if isinstance(spec, GridGuideSpec):
+        return {
+            "kind": "grid_guide",
+            "origin": _point_to_dict(spec.origin),
+            "cols": spec.cols,
+            "rows": spec.rows,
+            "dx": spec.dx,
+            "dy": spec.dy,
+        }
     if isinstance(spec, RoundedSpec):
         return {
             "kind": "rounded",
@@ -569,6 +648,14 @@ def _spec_from_dict(d: dict):
             dx=d["dx"],
             dy=d["dy"],
             origin=_point_from_dict(d.get("origin", [0.0, 0.0])),
+        )
+    if kind == "grid_guide":
+        return GridGuideSpec(
+            origin=_point_from_dict(d.get("origin", [0.0, 0.0])),
+            cols=int(d.get("cols", 8)),
+            rows=int(d.get("rows", 6)),
+            dx=d.get("dx", 40.0),
+            dy=d.get("dy", 40.0),
         )
     if kind == "rounded":
         return RoundedSpec(_spec_from_dict(d["shape"]), d["radius"])
@@ -661,6 +748,42 @@ class Document:
             pct=pct,
             start=None if start is None else _as_point_value(start),
             direction=direction,
+        )
+
+    def grid(
+        self,
+        name: str,
+        *,
+        origin=(0.0, 0.0),
+        cols: int = 8,
+        rows: int = 6,
+        dx: float = 40.0,
+        dy: float = 40.0,
+    ) -> Node:
+        """Add a non-drawing grid guide: a lattice for snapping and
+        ``grid_cell`` point references. Guides are invisible and export as
+        nothing.
+        """
+        node = Node(
+            self._new_id(),
+            self._unique_name(name),
+            "fill",
+            GridGuideSpec(
+                origin=_as_point_value(origin), cols=cols, rows=rows, dx=dx, dy=dy
+            ),
+            BLACK,
+            visible=False,
+        )
+        return self._add(node)
+
+    def grid_cell(self, node_ref: str, col: int, row: int, offset=None) -> GridCellPoint:
+        """A point reference to a grid guide's cell ``(col, row)``, with an
+        optional literal pixel ``offset`` preserving exact placement."""
+        return GridCellPoint(
+            node=node_ref,
+            col=col,
+            row=row,
+            offset=None if offset is None else _as_point_value(offset),
         )
 
     def to_dict(self) -> dict:
@@ -830,22 +953,26 @@ def _point_expr(pt) -> str:
 
 def _dict_has_anchor(obj) -> bool:
     if isinstance(obj, dict):
-        return "anchor" in obj or any(_dict_has_anchor(v) for v in obj.values())
+        return (
+            "anchor" in obj
+            or "grid_cell" in obj
+            or any(_dict_has_anchor(v) for v in obj.values())
+        )
     if isinstance(obj, (list, tuple)):
         return any(_dict_has_anchor(v) for v in obj)
     return False
 
 
 def _spec_has_anchor(spec) -> bool:
-    if isinstance(spec, AnchorPoint):
+    if isinstance(spec, (AnchorPoint, GridCellPoint)):
         return True
     if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec)):
-        return isinstance(spec.center, AnchorPoint)
+        return isinstance(spec.center, (AnchorPoint, GridCellPoint))
     if isinstance(spec, PolySpec):
-        return any(isinstance(p, AnchorPoint) for p in spec.points)
+        return any(isinstance(p, (AnchorPoint, GridCellPoint)) for p in spec.points)
     if isinstance(spec, PathSpec):
         return any(
-            isinstance(start, AnchorPoint)
+            isinstance(start, (AnchorPoint, GridCellPoint))
             or _dict_has_anchor(start)
             or any(_dict_has_anchor(i) for i in instrs)
             for start, instrs in spec.subpaths
@@ -862,6 +989,8 @@ def _spec_has_anchor(spec) -> bool:
         return _spec_has_anchor(spec.origin) or any(
             _spec_has_anchor(m) for m in spec.motifs
         )
+    if isinstance(spec, GridGuideSpec):
+        return False
     if isinstance(spec, RoundedSpec):
         return _spec_has_anchor(spec.shape)
     return False
@@ -945,6 +1074,11 @@ def _point_spec_expr(pt) -> str:
             args += f", start={_point_expr(pt.start)}"
         args += f", direction=wv.{pt.direction.name}"
         return f"doc.anchor({args})"
+    if isinstance(pt, GridCellPoint):
+        args = f"{pt.node!r}, {pt.col}, {pt.row}"
+        if pt.offset is not None:
+            args += f", offset={_point_expr(pt.offset)}"
+        return f"doc.grid_cell({args})"
     return _point_expr(pt)
 
 
@@ -1065,6 +1199,19 @@ def _generate_code(doc: Document) -> str:
     for node in doc.nodes:
         lines.append("")
         lines.append(f"# {node.name}")
+        shape = node.shape
+        if isinstance(shape, dict):
+            shape = _spec_from_dict(shape)
+        if isinstance(shape, GridGuideSpec):
+            origin = shape.origin
+            if not isinstance(origin, Point):
+                origin = Point(origin[0], origin[1])
+            lines.append(
+                f"doc.grid({node.name!r}, origin=({_fmt(origin.x)}, {_fmt(origin.y)}),"
+                f" cols={shape.cols}, rows={shape.rows},"
+                f" dx={_fmt(shape.dx)}, dy={_fmt(shape.dy)})"
+            )
+            continue
         call_args = [repr(node.name), _shape_expr(node.shape), _paint_expr(node.paint)]
         method = node.op
         if method == "outline_fill":
