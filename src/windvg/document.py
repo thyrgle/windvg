@@ -29,10 +29,12 @@ from .gradient import LinearGradient, RadialGradient
 from .path import (
     ArcCircle,
     Close,
-    Line as LineInstr,
     Path,
     SubPath,
     instruction_from_dict,
+)
+from .path import (
+    Line as LineInstr,
 )
 from .scene import Scene
 from .shapes import Arc, Circle, Ellipse, Orientation, Polygon, Polyline, Shape
@@ -122,7 +124,7 @@ class GridCellPoint:
         return {"grid_cell": payload}
 
     @staticmethod
-    def from_dict(d: dict) -> "GridCellPoint":
+    def from_dict(d: dict) -> GridCellPoint:
         payload = d["grid_cell"]
         offset = payload.get("offset")
         return GridCellPoint(
@@ -156,7 +158,7 @@ class BetweenPoint:
         }
 
     @staticmethod
-    def from_dict(d: dict) -> "BetweenPoint":
+    def from_dict(d: dict) -> BetweenPoint:
         payload = d["between"]
         return BetweenPoint(
             a=_point_from_dict(payload["a"]),

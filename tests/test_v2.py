@@ -1,19 +1,17 @@
 """v2 constructs: TransformSpec, RectSpec, PieSpec, BetweenPoint."""
 
-import math
 
 import pytest
 
 import windvg as wv
 import windvg.document as wvd
 from windvg.document import (
-    Document,
     BetweenPoint,
-    TransformSpec,
-    RectSpec,
+    Document,
     PieSpec,
+    RectSpec,
+    TransformSpec,
 )
-from windvg.geometry import Point
 
 
 def test_transform_bakes_on_resolve():
@@ -85,7 +83,14 @@ def test_transform_group_reference_rotates():
 
     doc = Document(200, 200)
     t = Transform.rotate(90, (100, 100))
-    doc.fill("t", TransformSpec((t.a, t.b, t.c, t.d, t.e, t.f), wvd.RectSpec((100, 100), 40, 20)), wv.RED)
+    doc.fill(
+        "t",
+        TransformSpec(
+            (t.a, t.b, t.c, t.d, t.e, t.f),
+            wvd.RectSpec((100, 100), 40, 20),
+        ),
+        wv.RED,
+    )
     pts = doc.resolve_to_json()[0]["shape"]["points"]
     # rotating the wide rect by 90° about its center makes it tall
     xs = [p[0] for p in pts]
