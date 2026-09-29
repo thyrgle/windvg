@@ -263,21 +263,19 @@ without becoming a programming language; see §6 "what we will not do".
 **W4 — No dash patterns.** *Tier B.* Dashes are strokes — TinyVG has no
 dash encoding. Also the classic look of "sketch" and "feedback" styling.
 
-**W5 — No arrowheads or markers.** *Tier A.* Arrowheads are small motifs
-at track ends. Today an author can *almost* do this: `along` with `n=1`
-on a line track places a rotated motif — but discovering that trick is
-not reasonable. A first-class `marker` (desugared to `along`-style
-placement) is cheap.
+**W5 — No arrowheads or markers.** *Tier A — FIXED in v3.* `stroke`
+nodes accept `marker = start|end|both triangle|bar size [paint]`, baked
+at resolve into ordinary polygon ops via the track protocol.
 
 **W6 — No clip paths or masks.** *Tier B (mask), Tier A-hard (clip).*
 Masks/compositing cannot encode in TinyVG. Clipping is geometrically
 bakeable (path intersection) but that is a serious computational feature;
 defer.
 
-**W7 — No reuse semantics.** *Tier A.* `along` bakes; SVG `<use>`
-propagates. A `use name=...` that instantiates a declared motif at
-compile time would at least give symbols a canonical spelling, with the
-propagation caveat documented (source-level reuse, not live references).
+**W7 — No reuse semantics.** *Tier A — FIXED in v3.* `def name = shape`
+plus `use name` gives symbols a canonical spelling with source-level
+propagation (defs survive in the IR; editors re-expand). Live-reference
+propagation remains a documented caveat.
 
 **W8 — Ecosystem is zero.** *Not a language property — a campaign.* An
 SVG→`.wvg` importer (lossy, documented) and a web playground would do
@@ -377,8 +375,9 @@ product decision, not a language decision.
 
 Ordered by value ÷ effort; nothing here breaks v1 files.
 
-1. **v2 additive draft** — the Tier A table in §5.1, spec + Python +
-   Rust + Kotlin, with golden vectors for each construct.
+1. **v2 additive draft** — SHIPPED: transforms, groups, `rect`/`pie`/
+   `chord`, `between`, and the Tier A remainder (markers, defs/use) in
+   v3, spec + Python + Rust + Kotlin, with golden vectors each.
 2. **Trap documentation** — callouts for wrap/clamp, segment-vs-winding,
    and the align defaults in `language.md` (spec-side only).
 3. **SVG→`.wvg` importer** (lossy, documented mapping) — addresses W8 and

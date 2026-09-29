@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 2**
+**Version 3**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -8,11 +8,13 @@ shapes' perimeters with anchors, arranges repetitions, and styles the results
 with fills and strokes. It contains no arithmetic, no variables, and no code
 execution — opening a `.wvg` file can never run a program.
 
-Version 2 is a strictly additive revision of version 1: every v1 file is a
-valid v2 file with identical meaning. Loaders accept both versions and reject
-anything newer. The additions are: node `transform=` (baked at resolve),
-`group` statements, the `rect`, `pie`, and `chord` shapes, the `between`
-point form, and the `matrix` transform expression. See §12.
+Version 3 is strictly additive over versions 1 and 2: every older file is
+a valid v3 file with identical meaning. Loaders accept 1, 2, and 3 and
+reject anything newer. Version 2 added node `transform=` (baked at
+resolve), `group` statements, the `rect`, `pie`, and `chord` shapes, the
+`between` point form, and the `matrix` transform expression. Version 3
+adds **point offsets**, the **polar point form**, **symbol defs and use**,
+and **stroke markers** — the relationships release. See §12.
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -153,7 +155,8 @@ deterministic and canonical formatting trivial.
 file         = "wvg" , INTEGER , scene , { top } ;
 scene        = "scene" , NUMBER , NUMBER ;
 
-top          = paint_decl | fill | stroke | outline_fill | guide | group ;
+top          = paint_decl | def_stmt | fill | stroke | outline_fill | guide | group ;
+def_stmt     = "def" , IDENT , "=" , shape ;
 
 paint_decl   = "paint" , IDENT , "=" , paint ;
 
@@ -162,7 +165,11 @@ fill         = "fill" , IDENT , "=" , shape ,
                "color" , "=" , paint , [ "hidden" ] ;
 stroke       = "stroke" , IDENT , "=" , shape ,
                [ "transform" , "=" , transform_expr ] ,
-               "color" , "=" , paint , [ "width" , "=" , NUMBER ] , [ "hidden" ] ;
+               "color" , "=" , paint , [ "width" , "=" , NUMBER ] ,
+               [ "marker" , "=" , placement , kind , NUMBER , [ paint ] ] ,
+               [ "hidden" ] ;
+placement    = "start" | "end" | "both" ;
+kind         = "triangle" | "bar" ;
 outline_fill = "outline_fill" , IDENT , "=" , shape ,
                [ "transform" , "=" , transform_expr ] ,
                "color" , "=" , paint , "outline" , "=" , paint ,
@@ -220,7 +227,8 @@ shape        = "circle" , "center" , "=" , point , "radius" , "=" , NUMBER
              | "star" , "center" , "=" , point , "outer_radius" , "=" , NUMBER ,
                "inner_radius" , "=" , NUMBER , [ "points" , "=" , INTEGER ] ,
                [ "start_angle_deg" , "=" , NUMBER ]
-             | "rounded" , "shape" , "=" , shape , "radius" , "=" , NUMBER ;
+             | "rounded" , "shape" , "=" , shape , "radius" , "=" , NUMBER
+             | "use" , IDENT ;
 
 align_mode   = "tangent" | "none" ;
 orientation  = "cw" | "ccw" ;
@@ -241,13 +249,16 @@ instruction  = "line" , "to" , "=" , point
                "to" , "=" , point
              | "close" ;
 
-point        = literal | anchor_ref | segment_ref | grid_ref | between_ref ;
+point        = literal | anchor_ref | segment_ref | grid_ref | between_ref | polar_ref ;
 literal      = "(" , NUMBER , "," , NUMBER , ")" ;
-anchor_ref   = "@" , IDENT , [ orientation ] , [ percent ] , [ "from" , literal ] ;
+anchor_ref   = "@" , IDENT , [ orientation ] , [ percent ] , [ "from" , literal ] ,
+               [ "+" , literal ] ;
 percent      = NUMBER , "%" ;
-segment_ref  = "@" , IDENT , "seg" , INTEGER , [ percent ] ;
+segment_ref  = "@" , IDENT , "seg" , INTEGER , [ percent ] , [ "+" , literal ] ;
 grid_ref     = "@" , IDENT , "[" , INTEGER , "," , INTEGER , "]" , [ "+" , literal ] ;
-between_ref  = "between" , point , point , percent ;
+between_ref  = "between" , point , point , percent , [ "+" , literal ] ;
+polar_ref    = "polar" , "center" , "=" , point , "radius" , "=" , NUMBER ,
+               "deg" , "=" , NUMBER ;
 
 transform_expr = "translate" , NUMBER , NUMBER
                | "rotate" , NUMBER , [ "about" , literal ]
@@ -273,7 +284,17 @@ Notes:
   line `x = a`; `mirror_y a` across the horizontal `y = a`. The `matrix`
   form states the six coefficients directly (§7.8) and is what emitters
   use for exact round-tripping.
-- `grid_ref`'s `+` offset accepts a literal point only.
+- `grid_ref`'s `+` offset accepts a literal point only. The same trailing
+  `+ (dx, dy)` on anchor, segment, and between references is the **point
+  offset** form (§7.15): the offset applies after the base point resolves.
+- `polar_ref`: `polar center=@g 0% radius=40 deg=30` is the point at
+  distance 40 from the resolved center, at 30 degrees clockwise on screen
+  from the +x axis (§7.16). The radius is unrestricted (negative values
+  face the opposite direction).
+- `def` declares a named shape at document scope; `use name` is a shape
+  that expands to it at resolve time (§7.17).
+- `marker` decorates a stroke with baked arrowheads or bars at the ends of
+  the shape's track (§7.18).
 
 --------------------------------------------------------------------------------
 
@@ -284,9 +305,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` or `wvg 2` — the integer is the format version. Version 2 is
-strictly additive (§12): every v1 file is a valid v2 file. Loaders accept
-1 and 2 and reject anything else.
+`wvg 1`, `wvg 2`, or `wvg 3` — the integer is the format version. Each
+version is strictly additive (§12): every older file is a valid newer
+file. Loaders accept 1, 2, and 3 and reject anything else.
 
 ### 5.2 Scene
 
@@ -355,6 +376,11 @@ The IR is the JSON produced by `windvg.document.Document.to_dict` /
 | `transform = t` (node) | the node's shape becomes `{"kind":"transform","t":[a,b,c,d,e,f],"shape":s}` (§7.14) |
 | `group [t] { … }` | syntax sugar: each contained node gets the group transform composed onto its own, then desugars as usual (§7.14) |
 | `between p q t%` | `{"between":{"a":p,"b":q,"pct":t}}` |
+| `polar center=c radius=r deg=d` | `{"polar":{"center":c,"radius":r,"deg":d}}` |
+| `+ (dx,dy)` on anchor/segment/between | `"offset":[dx,dy]` on the reference dict |
+| `def name = shape` | document-level `defs` entry `{"name": shape}` |
+| `use name` (shape position) | `{"kind":"use","def":"name"}` |
+| `marker = end triangle 10` | node `"markers":[{…}]` (§7.18) |
 | `@n cw p% from (x,y)` | `{"anchor":{"node":"n","pct":p,"start":[x,y],"direction":"cw"}}` (omit `start`/`direction` at defaults) |
 | `@n seg k p%` | `{"segment":{"node":"n","index":k,"pct":p}}` |
 | `@n[c,r] + (x,y)` | `{"grid_cell":{"node":"n","col":c,"row":r,"offset":[x,y]}}` (omit `offset` when absent) |
@@ -626,12 +652,12 @@ node or token):
 | Category | Conditions |
 | --- | --- |
 | Syntax | any grammar violation; wrong version; missing/duplicate `scene` |
-| Names | duplicate node or paint name; node/paint name collision; reserved word used as name; unknown `@` reference; paint used before declaration |
-| References | anchor target expands to no shapes (grid guide, `n = 0` generator) or to a compound; segment target is not a polygon/polyline or is out of edge bounds; grid-cell target is not a grid guide; cyclic reference chains |
+| Names | duplicate node, paint, or def name; name collision across kinds; reserved word used as name; unknown `@` reference; unknown `use` def; paint used before declaration |
+| References | anchor target expands to no shapes (grid guide, `n = 0` generator) or to a compound; segment target is not a polygon/polyline or is out of edge bounds; grid-cell target is not a grid guide; cyclic reference chains; cyclic `def` chains |
 | Shapes | circle/arc/pie/chord radius ≤ 0; arc/pie/chord sweep outside `0 < |sweep| < 360`; ellipse rx or ry ≤ 0; rect size components ≤ 0; polygon with < 3 points or zero shoelace; polyline with < 2 points; path with zero subpaths or an empty subpath; regular_polygon sides < 3; star points < 2 |
 | Generators | along track expands to ≠ 1 shape; polar radius ≤ 0; grid cols or rows < 1 |
 | Rounded | operand not a single polygon; radius ≤ 0; fillet does not fit a corner; repeated polygon points |
-| Ops | fill of a non-fillable shape; outline_fill of a compound; negative width |
+| Ops | fill of a non-fillable shape; outline_fill of a compound; negative width; marker on a non-stroke node; marker size ≤ 0 |
 | Scene | width or height ≤ 0 |
 | Encoding | (§8) coordinates/widths or canvas size out of range for the chosen coordinate units |
 
@@ -715,6 +741,68 @@ may nest; nested group transforms accumulate outward-in. Paints declared
 inside a group are hoisted to document scope in declaration order. Groups
 themselves are not nodes: they are not referenceable and do not exist
 after parsing.
+
+### 7.15 Point offsets
+
+An anchor, segment, grid, or between reference may carry a trailing
+`+ (dx, dy)`. The offset is added **after** the base point resolves, so it
+composes with every reference kind and nests cleanly: a `between` operand
+applies its own offset during its resolution, and the blend's offset
+applies to the blended result. Grid references already used this syntax
+for their cell offset; the meaning is identical everywhere — *resolve,
+then nudge*.
+
+### 7.16 Polar points
+
+`polar center=c radius=r deg=d` resolves to
+`c + r·(cos d°, sin d°)` — degrees clockwise on screen from the +x axis,
+the universal windvg angle convention. `r` is unrestricted: negative
+values point the opposite way. The center is a full point and may itself
+be an anchor, between, or another polar form.
+
+### 7.17 Defs and use
+
+`def name = shape` declares a named shape at document scope. A def is not
+a node: it draws nothing and has no z-order. `use name` is a shape that
+expands to the def's shape at resolve time, inheriting its track and fill
+semantics completely.
+
+- Def names are unique across nodes, paints, and defs, and are not
+  reserved words.
+- Defs may reference nodes with anchors and other defs with `use`;
+  resolution is two-phase like everything else. **Cyclic chains are
+  compile errors.**
+- `use` of an unknown def is a compile error.
+- A node whose shape is a `use` expands to the def's shapes; if the def
+  expands to several shapes the node contributes several ops.
+
+### 7.18 Markers
+
+A stroke node may carry one `marker = placement kind size [paint]`:
+
+```text
+placement = start | end | both     (points of the shape's track)
+kind      = triangle | bar
+size      > 0
+paint     optional; defaults to the node's stroke paint
+```
+
+The geometry uses the resolved shape's track protocol (§7.4):
+
+```text
+P = point_at_distance(d)        d = 0 for start, perimeter for end
+t = tangent_at_distance(d)      n = (t.y, −t.x)   (left of travel)
+triangle: polygon [ P,  P − t·s + n·(0.4·s),  P − t·s − n·(0.4·s) ]
+bar:      polygon [ P + t·(s/2) + n·(s/10),  P + t·(s/2) − n·(s/10),
+                    P − t·(s/2) − n·(s/10),  P − t·(s/2) + n·(s/10) ]
+```
+
+Marker polygons are ordinary fill ops appended after the stroke op — they
+bake at resolve, so every encoder and renderer treats them like any other
+polygon. Markers are only valid on stroke nodes. For open tracks the
+tangent at `d = perimeter` points outward; on closed tracks the "end" is
+the origin with the origin tangent — `end` markers are meant for open
+tracks (lines, polylines, arcs, open paths).
 
 --------------------------------------------------------------------------------
 
@@ -833,9 +921,9 @@ their APIs so third-party tooling can diff against the suite.
   are no optional extensions inside a version.
 - Excluded from v2, with room to add later: arithmetic expressions,
   dash patterns, clip paths and masks (Tier B/C — see
-  `format-review.md` §5), markers, `rule=nonzero`, star polygons via skip
+  `format-review.md` §5), `rule=nonzero`, star polygons via skip
   traversal (`star_polygon`), segment references on paths, and path
-  tolerance configuration.
+  tolerance configuration. Markers and symbol defs/use arrived in v3.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
