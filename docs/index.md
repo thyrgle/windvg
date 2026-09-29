@@ -52,6 +52,7 @@ ext
 api
 language
 format-review
+extensions
 ```
 
 ## Where things live
