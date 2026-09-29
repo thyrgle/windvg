@@ -672,7 +672,11 @@ result = p + (q − p) · (t / 100)
 ```
 
 `t` is unrestricted: values outside `[0, 100]` extrapolate along the
-p–q line. Cyclic `between` chains are impossible (points reference
+p–q line. The **second operand always carries an explicit percentage**,
+and the trailing percentage belongs to `between`: `between @a @b 0% 50%`
+blends the 0%-positions of `a` and `b`; `between @a @b 30% 50%` blends
+the 30%-position of `b`. Omitting the second operand's percentage is a
+parse error. Cyclic `between` chains are impossible (points reference
 shapes, not points), but a `between` operand referencing a node whose
 shape contains the same `between` is a cycle like any other (§7.11).
 
