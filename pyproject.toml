@@ -6,6 +6,8 @@ readme = "README.md"
 authors = [
     { name = "Christopher Sumnicht", email = "csumnicht@berkeley.edu" }
 ]
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE-2.0"]
 requires-python = ">=3.12"
 dependencies = []
 
