@@ -27,6 +27,9 @@ from .color import BLACK, Color
 from .geometry import Point
 from .gradient import LinearGradient, RadialGradient
 from .path import (
+    ArcCircle,
+    Close,
+    Line as LineInstr,
     Path,
     SubPath,
     instruction_from_dict,
@@ -38,6 +41,7 @@ __all__ = [
     "AlongSpec",
     "AnchorPoint",
     "ArcSpec",
+    "BetweenPoint",
     "CircleSpec",
     "CompoundSpec",
     "Document",
@@ -47,10 +51,13 @@ __all__ = [
     "GridSpec",
     "Node",
     "PathSpec",
+    "PieSpec",
     "PointSpec",
     "PolarSpec",
     "PolySpec",
+    "RectSpec",
     "RoundedSpec",
+    "TransformSpec",
 ]
 
 PointSpec = "Point | AnchorPoint | list[float] | dict"
@@ -115,7 +122,7 @@ class GridCellPoint:
         return {"grid_cell": payload}
 
     @staticmethod
-    def from_dict(d: dict) -> GridCellPoint:
+    def from_dict(d: dict) -> "GridCellPoint":
         payload = d["grid_cell"]
         offset = payload.get("offset")
         return GridCellPoint(
@@ -126,8 +133,40 @@ class GridCellPoint:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BetweenPoint:
+    """The linear blend of two resolved points: ``a + (b - a) * pct / 100``.
+
+    ``pct`` is unrestricted — values outside ``[0, 100]`` extrapolate along
+    the a–b line. Operands resolve recursively and may themselves be
+    anchors, grid cells, or further ``between`` blends.
+    """
+
+    a: object
+    b: object
+    pct: float
+
+    def to_dict(self) -> dict:
+        return {
+            "between": {
+                "a": _point_to_dict(self.a),
+                "b": _point_to_dict(self.b),
+                "pct": self.pct,
+            }
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "BetweenPoint":
+        payload = d["between"]
+        return BetweenPoint(
+            a=_point_from_dict(payload["a"]),
+            b=_point_from_dict(payload["b"]),
+            pct=float(payload["pct"]),
+        )
+
+
 def _point_to_dict(pt) -> list | dict:
-    if isinstance(pt, (AnchorPoint, GridCellPoint)):
+    if isinstance(pt, (AnchorPoint, GridCellPoint, BetweenPoint)):
         return pt.to_dict()
     if isinstance(pt, Point):
         return [pt.x, pt.y]
@@ -144,6 +183,8 @@ def _point_from_dict(d: list | dict):
             return AnchorPoint.from_dict(d)
         if "grid_cell" in d:
             return GridCellPoint.from_dict(d)
+        if "between" in d:
+            return BetweenPoint.from_dict(d)
         raise ValueError(f"unknown point reference {sorted(d)!r}")
     return Point(d[0], d[1])
 
@@ -336,6 +377,39 @@ class RoundedSpec:
     radius: float
 
 
+@dataclass(frozen=True, slots=True)
+class RectSpec:
+    """An axis-aligned rectangle (parametric center), resolving to a
+    clockwise-on-screen polygon: top-left, top-right, bottom-right,
+    bottom-left."""
+
+    center: object
+    width: float
+    height: float
+
+
+@dataclass(frozen=True, slots=True)
+class PieSpec:
+    """A closed wedge (`chord=False`: start, arc, line to center, close) or
+    chord (`chord=True`: start, arc, close) built from an arc."""
+
+    center: object
+    radius: float
+    start_deg: float
+    sweep_deg: float
+    chord: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TransformSpec:
+    """A shape with an affine transform baked at resolve time. The matrix is
+    six coefficients ``(a, b, c, d, e, f)`` with
+    ``x' = a*x + c*y + e; y' = b*x + d*y + f``."""
+
+    t: tuple  # (a, b, c, d, e, f)
+    shape: object
+
+
 _GENERATOR_KINDS = {"along", "polar", "grid", "rounded"}
 
 
@@ -357,6 +431,11 @@ class _Resolver:
             shape = self.first_shape_of(pt.node)
             hint = pt.start if pt.start is not None else shape.point_at_distance(0.0)
             return shape.anchor(hint, pt.direction).point(pt.pct)
+        if isinstance(pt, BetweenPoint):
+            pa = self.resolve_point(pt.a)
+            pb = self.resolve_point(pt.b)
+            t = pt.pct / 100.0
+            return Point(pa.x + (pb.x - pa.x) * t, pa.y + (pb.y - pa.y) * t)
         if isinstance(pt, GridCellPoint):
             node = self.document.get(pt.node)
             grid = (
@@ -386,8 +465,15 @@ class _Resolver:
             spec = _spec_from_dict(spec)
         if isinstance(spec, GridGuideSpec):
             return []
-        if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec)):
+        if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec, RectSpec, PieSpec)):
             return [self._atomic_shape(spec)]
+        if isinstance(spec, TransformSpec):
+            from .ext.transform import Transform, transformed
+
+            t = Transform(*spec.t)
+            return [
+                transformed(s, t) for s in self.expand(spec.shape)
+            ]
         if isinstance(spec, PolySpec):
             points = [self.resolve_point(p) for p in spec.points]
             if spec.closed:
@@ -431,6 +517,38 @@ class _Resolver:
             return Ellipse(
                 self.resolve_point(spec.center), spec.rx, spec.ry, spec.rotation_deg
             )
+        if isinstance(spec, RectSpec):
+            c = self.resolve_point(spec.center)
+            hw, hh = spec.width / 2.0, spec.height / 2.0
+            return Polygon(
+                [
+                    Point(c.x - hw, c.y - hh),
+                    Point(c.x + hw, c.y - hh),
+                    Point(c.x + hw, c.y + hh),
+                    Point(c.x - hw, c.y + hh),
+                ]
+            )
+        if isinstance(spec, PieSpec):
+            import math
+
+            c = self.resolve_point(spec.center)
+            r = spec.radius
+            rad0 = math.radians(spec.start_deg)
+            rad1 = math.radians(spec.start_deg + spec.sweep_deg)
+            start = Point(c.x + r * math.cos(rad0), c.y + r * math.sin(rad0))
+            end = Point(c.x + r * math.cos(rad1), c.y + r * math.sin(rad1))
+            instructions: list = [
+                ArcCircle(
+                    r,
+                    large=abs(spec.sweep_deg) > 180.0,
+                    sweep_cw=spec.sweep_deg > 0.0,
+                    to=end,
+                )
+            ]
+            if not spec.chord:
+                instructions.append(LineInstr(c))
+            instructions.append(Close())
+            return Path([SubPath(start, tuple(instructions))])
         return Arc(
             self.resolve_point(spec.center), spec.radius, spec.start_deg, spec.sweep_deg
         )
@@ -593,6 +711,27 @@ def _spec_to_dict(spec) -> dict:
             "shape": _spec_to_dict(spec.shape),
             "radius": spec.radius,
         }
+    if isinstance(spec, RectSpec):
+        return {
+            "kind": "rect",
+            "center": _point_to_dict(spec.center),
+            "size": [spec.width, spec.height],
+        }
+    if isinstance(spec, PieSpec):
+        return {
+            "kind": "pie",
+            "center": _point_to_dict(spec.center),
+            "radius": spec.radius,
+            "start_deg": spec.start_deg,
+            "sweep_deg": spec.sweep_deg,
+            "chord": spec.chord,
+        }
+    if isinstance(spec, TransformSpec):
+        return {
+            "kind": "transform",
+            "t": list(spec.t),
+            "shape": _spec_to_dict(spec.shape),
+        }
     raise TypeError(f"cannot serialize shape spec {type(spec).__name__}")
 
 
@@ -659,6 +798,20 @@ def _spec_from_dict(d: dict):
         )
     if kind == "rounded":
         return RoundedSpec(_spec_from_dict(d["shape"]), d["radius"])
+    if kind == "rect":
+        return RectSpec(
+            _point_from_dict(d["center"]), float(d["size"][0]), float(d["size"][1])
+        )
+    if kind == "pie":
+        return PieSpec(
+            _point_from_dict(d["center"]),
+            d["radius"],
+            d["start_deg"],
+            d["sweep_deg"],
+            chord=bool(d.get("chord", False)),
+        )
+    if kind == "transform":
+        return TransformSpec(tuple(float(v) for v in d["t"]), _spec_from_dict(d["shape"]))
     raise ValueError(f"unknown shape spec kind {kind}")
 
 
@@ -964,10 +1117,12 @@ def _dict_has_anchor(obj) -> bool:
 
 
 def _spec_has_anchor(spec) -> bool:
-    if isinstance(spec, (AnchorPoint, GridCellPoint)):
+    if isinstance(spec, (AnchorPoint, GridCellPoint, BetweenPoint)):
         return True
-    if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec)):
-        return isinstance(spec.center, (AnchorPoint, GridCellPoint))
+    if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec, RectSpec, PieSpec)):
+        return isinstance(spec.center, (AnchorPoint, GridCellPoint, BetweenPoint))
+    if isinstance(spec, TransformSpec):
+        return _spec_has_anchor(spec.shape)
     if isinstance(spec, PolySpec):
         return any(isinstance(p, (AnchorPoint, GridCellPoint)) for p in spec.points)
     if isinstance(spec, PathSpec):
@@ -1025,6 +1180,21 @@ def _spec_expr(spec) -> str:
         return f"wvd.CompoundSpec(shapes=({inner},))"
     if isinstance(spec, (AlongSpec, PolarSpec, GridSpec, RoundedSpec)):
         return _generator_expr(spec)
+    if isinstance(spec, RectSpec):
+        center = _point_spec_expr(spec.center)
+        return (
+            f"wvd.RectSpec(center={center},"
+            f" width={_fmt(spec.width)}, height={_fmt(spec.height)})"
+        )
+    if isinstance(spec, PieSpec):
+        return (
+            f"wvd.PieSpec(center={_point_spec_expr(spec.center)},"
+            f" radius={_fmt(spec.radius)}, start_deg={_fmt(spec.start_deg)},"
+            f" sweep_deg={_fmt(spec.sweep_deg)}, chord={spec.chord!r})"
+        )
+    if isinstance(spec, TransformSpec):
+        t = ", ".join(_fmt(v) for v in spec.t)
+        return f"wvd.TransformSpec(t=({t}), shape={_spec_expr(spec.shape)})"
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
 
@@ -1068,6 +1238,11 @@ def _generator_expr(spec) -> str:
 
 
 def _point_spec_expr(pt) -> str:
+    if isinstance(pt, BetweenPoint):
+        return (
+            f"wvd.BetweenPoint(a={_point_spec_expr(pt.a)},"
+            f" b={_point_spec_expr(pt.b)}, pct={_fmt(pt.pct)})"
+        )
     if isinstance(pt, AnchorPoint):
         args = f"{pt.node!r}, pct={_fmt(pt.pct)}"
         if pt.start is not None:
@@ -1174,6 +1349,8 @@ def _shape_expr(spec) -> str:
         return (
             f"wvd.RoundedSpec(shape={_shape_expr(spec.shape)}, radius={_fmt(spec.radius)})"
         )
+    if isinstance(spec, (RectSpec, PieSpec, TransformSpec)):
+        return _spec_expr(spec)
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
 
