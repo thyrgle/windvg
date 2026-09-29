@@ -1,12 +1,18 @@
 # The `.wvg` language specification
 
-**Version 1 — draft**
+**Version 2**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
 shapes' perimeters with anchors, arranges repetitions, and styles the results
 with fills and strokes. It contains no arithmetic, no variables, and no code
 execution — opening a `.wvg` file can never run a program.
+
+Version 2 is a strictly additive revision of version 1: every v1 file is a
+valid v2 file with identical meaning. Loaders accept both versions and reject
+anything newer. The additions are: node `transform=` (baked at resolve),
+`group` statements, the `rect`, `pie`, and `chord` shapes, the `between`
+point form, and the `matrix` transform expression. See §12.
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -147,18 +153,22 @@ deterministic and canonical formatting trivial.
 file         = "wvg" , INTEGER , scene , { top } ;
 scene        = "scene" , NUMBER , NUMBER ;
 
-top          = paint_decl | fill | stroke | outline_fill | guide ;
+top          = paint_decl | fill | stroke | outline_fill | guide | group ;
 
 paint_decl   = "paint" , IDENT , "=" , paint ;
 
 fill         = "fill" , IDENT , "=" , shape ,
+               [ "transform" , "=" , transform_expr ] ,
                "color" , "=" , paint , [ "hidden" ] ;
 stroke       = "stroke" , IDENT , "=" , shape ,
+               [ "transform" , "=" , transform_expr ] ,
                "color" , "=" , paint , [ "width" , "=" , NUMBER ] , [ "hidden" ] ;
 outline_fill = "outline_fill" , IDENT , "=" , shape ,
+               [ "transform" , "=" , transform_expr ] ,
                "color" , "=" , paint , "outline" , "=" , paint ,
                [ "width" , "=" , NUMBER ] , [ "hidden" ] ;
 guide        = "guide" , IDENT , "=" , guide_shape ;
+group        = "group" , [ transform_expr ] , "{" , { top } , "}" ;
 guide_shape  = "grid" , grid_props | shape ;
 grid_props   = [ "origin" , "=" , point ] , [ "cols" , "=" , INTEGER ] ,
                [ "rows" , "=" , INTEGER ] , [ "dx" , "=" , NUMBER ] ,
@@ -183,6 +193,11 @@ shape        = "circle" , "center" , "=" , point , "radius" , "=" , NUMBER
              | "ellipse" , "center" , "=" , point , "rx" , "=" , NUMBER ,
                "ry" , "=" , NUMBER , [ "rotation_deg" , "=" , NUMBER ]
              | "arc" , "center" , "=" , point , "radius" , "=" , NUMBER ,
+               "start_deg" , "=" , NUMBER , "sweep_deg" , "=" , NUMBER
+             | "rect" , "center" , "=" , point , "size" , "=" , literal
+             | "pie" , "center" , "=" , point , "radius" , "=" , NUMBER ,
+               "start_deg" , "=" , NUMBER , "sweep_deg" , "=" , NUMBER
+             | "chord" , "center" , "=" , point , "radius" , "=" , NUMBER ,
                "start_deg" , "=" , NUMBER , "sweep_deg" , "=" , NUMBER
              | "polygon" , "points" , "=" , point_list
              | "polyline" , "points" , "=" , point_list
@@ -226,12 +241,20 @@ instruction  = "line" , "to" , "=" , point
                "to" , "=" , point
              | "close" ;
 
-point        = literal | anchor_ref | segment_ref | grid_ref ;
+point        = literal | anchor_ref | segment_ref | grid_ref | between_ref ;
 literal      = "(" , NUMBER , "," , NUMBER , ")" ;
 anchor_ref   = "@" , IDENT , [ orientation ] , [ percent ] , [ "from" , literal ] ;
 percent      = NUMBER , "%" ;
 segment_ref  = "@" , IDENT , "seg" , INTEGER , [ percent ] ;
 grid_ref     = "@" , IDENT , "[" , INTEGER , "," , INTEGER , "]" , [ "+" , literal ] ;
+between_ref  = "between" , point , point , percent ;
+
+transform_expr = "translate" , NUMBER , NUMBER
+               | "rotate" , NUMBER , [ "about" , literal ]
+               | "scale" , NUMBER , [ NUMBER ] , [ "about" , literal ]
+               | "mirror_x" , NUMBER
+               | "mirror_y" , NUMBER
+               | "matrix" , NUMBER , NUMBER , NUMBER , NUMBER , NUMBER , NUMBER ;
 ```
 
 Notes:
@@ -243,6 +266,13 @@ Notes:
   is valid.
 - `segment_ref`: `@hull seg 2 50%` selects one edge of a polygon or polyline
   and a position along it (§7.3); the percent defaults to `0%`.
+- `between_ref`: `between p q t%` is the linear blend of two resolved
+  points (§7.7); `t` may leave `[0, 100]` and extrapolates.
+- `transform_expr`: see §7.8. `scale sx` means uniform scale; the `about`
+  point defaults to the origin. `mirror_x a` reflects across the vertical
+  line `x = a`; `mirror_y a` across the horizontal `y = a`. The `matrix`
+  form states the six coefficients directly (§7.8) and is what emitters
+  use for exact round-tripping.
 - `grid_ref`'s `+` offset accepts a literal point only.
 
 --------------------------------------------------------------------------------
@@ -254,8 +284,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` — the integer is the format version (currently 1). Loaders must
-reject any other version.
+`wvg 1` or `wvg 2` — the integer is the format version. Version 2 is
+strictly additive (§12): every v1 file is a valid v2 file. Loaders accept
+1 and 2 and reject anything else.
 
 ### 5.2 Scene
 
@@ -318,6 +349,12 @@ The IR is the JSON produced by `windvg.document.Document.to_dict` /
 | `grid` (guide) | `{"kind":"grid_guide","origin":…,"cols":…,"rows":…,"dx":…,"dy":…}` |
 | `regular_polygon …`, `star …` | desugars to `{"kind":"polygon", …}` (§7.7) |
 | `rounded shape=s radius=r` | `{"kind":"rounded","shape":s,"radius":r}` |
+| `rect center=c size=(w,h)` | `{"kind":"rect","center":c,"size":[w,h]}` |
+| `pie center=c radius=r start_deg=a sweep_deg=s` | `{"kind":"pie","center":c,"radius":r,"start_deg":a,"sweep_deg":s,"chord":false}` |
+| `chord …` | as `pie`, with `"chord":true` |
+| `transform = t` (node) | the node's shape becomes `{"kind":"transform","t":[a,b,c,d,e,f],"shape":s}` (§7.14) |
+| `group [t] { … }` | syntax sugar: each contained node gets the group transform composed onto its own, then desugars as usual (§7.14) |
+| `between p q t%` | `{"between":{"a":p,"b":q,"pct":t}}` |
 | `@n cw p% from (x,y)` | `{"anchor":{"node":"n","pct":p,"start":[x,y],"direction":"cw"}}` (omit `start`/`direction` at defaults) |
 | `@n seg k p%` | `{"segment":{"node":"n","index":k,"pct":p}}` |
 | `@n[c,r] + (x,y)` | `{"grid_cell":{"node":"n","col":c,"row":r,"offset":[x,y]}}` (omit `offset` when absent) |
@@ -573,7 +610,7 @@ vertices are an error.
 ### 7.10 Operations
 
 - **fill** — the shape must be fillable (polygon, circle, ellipse, closed
-  path, compound). Arcs and polylines cannot fill.
+  path, compound, rect, pie, chord). Arcs and polylines cannot fill.
 - **stroke** — any shape; `width` ≥ 0, default 1.0.
 - **outline_fill** — fillable, **not** a compound; `width` ≥ 0, default 1.0.
 - **hidden** — the node survives in the document but resolves to nothing.
@@ -591,7 +628,7 @@ node or token):
 | Syntax | any grammar violation; wrong version; missing/duplicate `scene` |
 | Names | duplicate node or paint name; node/paint name collision; reserved word used as name; unknown `@` reference; paint used before declaration |
 | References | anchor target expands to no shapes (grid guide, `n = 0` generator) or to a compound; segment target is not a polygon/polyline or is out of edge bounds; grid-cell target is not a grid guide; cyclic reference chains |
-| Shapes | circle/arc radius ≤ 0; arc sweep outside `0 < |sweep| < 360`; ellipse rx or ry ≤ 0; polygon with < 3 points or zero shoelace; polyline with < 2 points; path with zero subpaths or an empty subpath; regular_polygon sides < 3; star points < 2 |
+| Shapes | circle/arc/pie/chord radius ≤ 0; arc/pie/chord sweep outside `0 < |sweep| < 360`; ellipse rx or ry ≤ 0; rect size components ≤ 0; polygon with < 3 points or zero shoelace; polyline with < 2 points; path with zero subpaths or an empty subpath; regular_polygon sides < 3; star points < 2 |
 | Generators | along track expands to ≠ 1 shape; polar radius ≤ 0; grid cols or rows < 1 |
 | Rounded | operand not a single polygon; radius ≤ 0; fillet does not fit a corner; repeated polygon points |
 | Ops | fill of a non-fillable shape; outline_fill of a compound; negative width |
@@ -600,6 +637,80 @@ node or token):
 
 Percentages, angles, and offsets are unconstrained beyond finiteness; their
 effects are defined by §7.4–§7.5.
+
+### 7.12 rect, pie, chord
+
+**rect** `center=c size=(w,h)` — an axis-aligned rectangle, stored as an IR
+kind (the center may be parametric). Resolves to a closed polygon with the
+four corners `c ± (w/2, h/2)` wound clockwise on screen:
+`top-left, top-right, bottom-right, bottom-left`. Both `w` and `h` must be
+positive.
+
+**pie** and **chord** `center=c radius=r start_deg=a sweep_deg=s` — closed
+fillable paths built from an `arc` exactly as `rounded` builds paths:
+
+```text
+p_start = c + r·(cos a, sin a)
+p_end   = c + r·(cos (a+s), sin (a+s))
+pie:   subpath { start = p_start, arc_circle r (large = |s| > 180)
+                 sweep_cw = (s > 0) to p_end, line to = c, close }
+chord: subpath { start = p_start, arc_circle r (large = |s| > 180)
+                 sweep_cw = (s > 0) to p_end, close }
+```
+
+Constraints as for `arc`: `r > 0` and `0 < |s| < 360`. The center may be
+parametric.
+
+### 7.13 between points
+
+`between p q t%` resolves both operands as full points (either may itself
+be an anchor, segment, or grid reference, recursively) and returns the
+linear blend
+
+```text
+result = p + (q − p) · (t / 100)
+```
+
+`t` is unrestricted: values outside `[0, 100]` extrapolate along the
+p–q line. Cyclic `between` chains are impossible (points reference
+shapes, not points), but a `between` operand referencing a node whose
+shape contains the same `between` is a cycle like any other (§7.11).
+
+### 7.14 Transforms and groups
+
+A node-level `transform = t` wraps the node's shape in a transform spec
+whose matrix is written to the IR as six coefficients `(a, b, c, d, e, f)`
+with the windvg convention:
+
+```text
+x' = a·x + c·y + e
+y' = b·x + d·y + f
+```
+
+The named forms map as follows (angles in degrees, clockwise on screen;
+`about` defaults to the origin):
+
+```text
+translate tx ty        → e = tx, f = ty
+rotate θ about c       → T(c) · R(θ) · T(−c),  R = [cos −sin; sin cos]
+scale sx [sy] about c  → T(c) · S(sx, sy) · T(−c)   (sy defaults to sx)
+mirror_x a             → a = −1, e = 2a            (reflect x = a)
+mirror_y a             → d = −1, f = 2a            (reflect y = a)
+matrix a b c d e f     → the coefficients themselves
+```
+
+At resolve time the transform is **baked** into concrete shapes exactly as
+`windvg.ext.transform.transformed` does (points transform; circles under
+non-similarity maps become ellipses; arc sweeps flip iff the determinant
+is negative; path instructions transform pointwise).
+
+A `group [t] { … }` is syntax sugar: the group's transform composes onto
+each contained node's own transform (own first, then the group's —
+`group_t ∘ node_t`), and the children desugar as ordinary nodes. Groups
+may nest; nested group transforms accumulate outward-in. Paints declared
+inside a group are hoisted to document scope in declaration order. Groups
+themselves are not nodes: they are not referenceable and do not exist
+after parsing.
 
 --------------------------------------------------------------------------------
 
@@ -709,17 +820,18 @@ their APIs so third-party tooling can diff against the suite.
 
 ## 10. Versioning and extension policy
 
-- Version 1 is frozen: no construct changes meaning, and any file using
+- Version 2 is additive over version 1: every v1 file is a valid v2 file.
+  Version 1 is frozen: no construct changes meaning, and any file using
   features defined here must behave identically under every conforming
   implementation.
 - Future versions may add constructs; loaders must reject higher versions
   rather than guess. Unknown properties are errors (strict parsing) — there
   are no optional extensions inside a version.
-- Excluded from v1, with room to add later: arithmetic expressions,
-  user transforms (bake them with Python's `windvg.ext` or a future
-  `transform` construct), star polygons via skip traversal
-  (`star_polygon`), segment references on paths, and path tolerance
-  configuration.
+- Excluded from v2, with room to add later: arithmetic expressions,
+  dash patterns, clip paths and masks (Tier B/C — see
+  `format-review.md` §5), markers, `rule=nonzero`, star polygons via skip
+  traversal (`star_polygon`), segment references on paths, and path
+  tolerance configuration.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
@@ -733,21 +845,23 @@ Identifiers must not be any of the following keywords, property names, or
 named colors:
 
 ```text
-align       arc         arc_circle  arc_ellipse  along      black
-blue        c1          c2          ccw          center     center_color
-circle      close       color       cols         compound   ctrl
-cw          cyan        direction   dx           dy         edge
-ellipse     end         end_color   fill         from       gray
-green       grid        guide       hidden       inner_radius large
-line        linear      magenta     motifs       n          none
-offset_pct  origin      outline     outline_fill outer_radius p1
-p2          paint       path        points       polar      polygon
+align       arc         arc_circle  arc_ellipse  along      between
+black       blue        c1          c2           ccw        center
+center_color chord      circle      close        color      cols
+compound    ctrl        cw          cyan         direction  dx
+dy          edge        ellipse     end          end_color  fill
+from        gray        green       grid         guide      hidden
+inner_radius large     line        linear       magenta    matrix
+mirror_x    mirror_y    motifs      n            none       offset_pct
+origin      outline     outline_fill outer_radius p1         p2
+paint       path        pie         points       polar      polygon
 polyline    quad        radial      radius       red        regular_polygon
-rgba        rgb         rounded     rotation_deg rows        rx
-ry          scene       seg         shape        shapes     sides
-star        start       start_angle_deg start_color start_deg stroke
-subpaths    sweep_deg   tangent     to           track      wvg
-white       width       yellow
+rgba        rgb         rounded     rotation_deg rows        rotate
+rx          ry          scale       scene        seg        shape
+shapes      sides       star        start        start_angle_deg
+start_color start_deg   stroke      subpaths     sweep_deg  tangent
+to          track       transform   translate    wvg        white
+width       yellow
 ```
 
 ## Appendix B — Complete example
