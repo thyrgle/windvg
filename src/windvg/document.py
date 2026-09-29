@@ -20,6 +20,7 @@ parametric: the generated code never hardcodes resolved pixel positions.
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -44,6 +45,9 @@ __all__ = [
     "AnchorPoint",
     "ArcSpec",
     "BetweenPoint",
+    "PolarPoint",
+    "Marker",
+    "PolarPoint",
     "CircleSpec",
     "CompoundSpec",
     "Document",
@@ -59,7 +63,9 @@ __all__ = [
     "PolySpec",
     "RectSpec",
     "RoundedSpec",
+    "SegmentPoint",
     "TransformSpec",
+    "UseSpec",
 ]
 
 PointSpec = "Point | AnchorPoint | list[float] | dict"
@@ -82,6 +88,7 @@ class AnchorPoint:
     pct: float = 0.0
     start: Point | None = None
     direction: Orientation = Orientation.CW
+    offset: tuple | None = None  # (dx, dy), applied after resolution
 
     def to_dict(self) -> dict:
         payload: dict = {"node": self.node, "pct": self.pct}
@@ -89,17 +96,21 @@ class AnchorPoint:
             payload["start"] = [self.start.x, self.start.y]
         if self.direction is not Orientation.CW:
             payload["direction"] = _ORIENT[self.direction]
+        if self.offset is not None:
+            payload["offset"] = [self.offset[0], self.offset[1]]
         return {"anchor": payload}
 
     @staticmethod
     def from_dict(d: dict) -> AnchorPoint:
         payload = d["anchor"]
         start = payload.get("start")
+        offset = payload.get("offset")
         return AnchorPoint(
             node=payload["node"],
             pct=payload.get("pct", 0.0),
             start=None if start is None else Point(start[0], start[1]),
             direction=_ORIENT_BACK[payload.get("direction", "cw")],
+            offset=None if offset is None else (offset[0], offset[1]),
         )
 
 
@@ -147,28 +158,89 @@ class BetweenPoint:
     a: object
     b: object
     pct: float
+    offset: tuple | None = None  # (dx, dy), applied after resolution
 
     def to_dict(self) -> dict:
-        return {
-            "between": {
-                "a": _point_to_dict(self.a),
-                "b": _point_to_dict(self.b),
-                "pct": self.pct,
-            }
+        payload: dict = {
+            "a": _point_to_dict(self.a),
+            "b": _point_to_dict(self.b),
+            "pct": self.pct,
         }
+        if self.offset is not None:
+            payload["offset"] = [self.offset[0], self.offset[1]]
+        return {"between": payload}
 
     @staticmethod
     def from_dict(d: dict) -> BetweenPoint:
         payload = d["between"]
+        offset = payload.get("offset")
         return BetweenPoint(
             a=_point_from_dict(payload["a"]),
             b=_point_from_dict(payload["b"]),
             pct=float(payload["pct"]),
+            offset=None if offset is None else (offset[0], offset[1]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentPoint:
+    """A point on one edge of a referenced polygon/polyline: ``index`` picks
+    the edge (vertex ``index`` → ``index + 1``; a polygon's closing edge is
+    ``len(points) − 1``), ``pct`` travels along it (clamped)."""
+
+    node: str
+    index: int
+    pct: float = 0.0
+    offset: tuple | None = None
+
+    def to_dict(self) -> dict:
+        payload: dict = {"node": self.node, "index": self.index, "pct": self.pct}
+        if self.offset is not None:
+            payload["offset"] = [self.offset[0], self.offset[1]]
+        return {"segment": payload}
+
+    @staticmethod
+    def from_dict(d: dict) -> SegmentPoint:
+        payload = d["segment"]
+        offset = payload.get("offset")
+        return SegmentPoint(
+            node=payload["node"],
+            index=int(payload["index"]),
+            pct=float(payload.get("pct", 0.0)),
+            offset=None if offset is None else (offset[0], offset[1]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PolarPoint:
+    """The point at ``radius`` and ``deg`` degrees (clockwise on screen from
+    +x) around a resolved center. The radius is unrestricted."""
+
+    center: object
+    radius: float
+    deg: float
+
+    def to_dict(self) -> dict:
+        return {
+            "polar": {
+                "center": _point_to_dict(self.center),
+                "radius": self.radius,
+                "deg": self.deg,
+            }
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> PolarPoint:
+        payload = d["polar"]
+        return PolarPoint(
+            center=_point_from_dict(payload["center"]),
+            radius=float(payload["radius"]),
+            deg=float(payload["deg"]),
         )
 
 
 def _point_to_dict(pt) -> list | dict:
-    if isinstance(pt, (AnchorPoint, GridCellPoint, BetweenPoint)):
+    if isinstance(pt, (AnchorPoint, GridCellPoint, BetweenPoint, SegmentPoint, PolarPoint)):
         return pt.to_dict()
     if isinstance(pt, Point):
         return [pt.x, pt.y]
@@ -187,6 +259,10 @@ def _point_from_dict(d: list | dict):
             return GridCellPoint.from_dict(d)
         if "between" in d:
             return BetweenPoint.from_dict(d)
+        if "segment" in d:
+            return SegmentPoint.from_dict(d)
+        if "polar" in d:
+            return PolarPoint.from_dict(d)
         raise ValueError(f"unknown point reference {sorted(d)!r}")
     return Point(d[0], d[1])
 
@@ -412,12 +488,37 @@ class TransformSpec:
     shape: object
 
 
+@dataclass(frozen=True, slots=True)
+class UseSpec:
+    """A shape that expands to the document-scope def ``def_name`` at
+    resolve time. Cyclic def chains are compile errors."""
+
+    def_name: str
+
+    def to_dict(self) -> dict:
+        return {"kind": "use", "def": self.def_name}
+
+
+@dataclass(frozen=True, slots=True)
+class Marker:
+    """A baked arrowhead/bar at the ends of a stroke node's track.
+
+    ``placement`` is ``start``, ``end``, or ``both``; ``kind`` is
+    ``triangle`` or ``bar``; an optional paint defaults to the stroke's."""
+
+    placement: str  # start | end | both
+    kind: str  # triangle | bar
+    size: float
+    paint: Color | LinearGradient | RadialGradient | None = None
+
+
 _GENERATOR_KINDS = {"along", "polar", "grid", "rounded"}
 
 
 class _Resolver:
     def __init__(self, document: Document):
         self.document = document
+        self._def_stack: set[str] = set()
 
     def first_shape_of(self, ref: str) -> Shape:
         node = self.document.get(ref)
@@ -432,12 +533,46 @@ class _Resolver:
         if isinstance(pt, AnchorPoint):
             shape = self.first_shape_of(pt.node)
             hint = pt.start if pt.start is not None else shape.point_at_distance(0.0)
-            return shape.anchor(hint, pt.direction).point(pt.pct)
+            p = shape.anchor(hint, pt.direction).point(pt.pct)
+            if pt.offset is not None:
+                p = Point(p.x + pt.offset[0], p.y + pt.offset[1])
+            return p
         if isinstance(pt, BetweenPoint):
             pa = self.resolve_point(pt.a)
             pb = self.resolve_point(pt.b)
             t = pt.pct / 100.0
-            return Point(pa.x + (pb.x - pa.x) * t, pa.y + (pb.y - pa.y) * t)
+            p = Point(pa.x + (pb.x - pa.x) * t, pa.y + (pb.y - pa.y) * t)
+            if pt.offset is not None:
+                p = Point(p.x + pt.offset[0], p.y + pt.offset[1])
+            return p
+        if isinstance(pt, SegmentPoint):
+            shape = self.first_shape_of(pt.node)
+            if isinstance(shape, Polygon):
+                pts = shape.points
+                a = pts[pt.index % len(pts)]
+                b = pts[(pt.index + 1) % len(pts)]
+            elif isinstance(shape, Polyline):
+                if pt.index < 0 or pt.index + 1 >= len(shape.points):
+                    raise ValueError(
+                        f"segment index {pt.index} out of range for {pt.node!r}"
+                    )
+                a = shape.points[pt.index]
+                b = shape.points[pt.index + 1]
+            else:
+                raise ValueError(
+                    f"segment target {pt.node!r} must be a polygon or polyline"
+                )
+            t = max(0.0, min(1.0, pt.pct / 100.0))
+            p = Point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+            if pt.offset is not None:
+                p = Point(p.x + pt.offset[0], p.y + pt.offset[1])
+            return p
+        if isinstance(pt, PolarPoint):
+            c = self.resolve_point(pt.center)
+            rad = math.radians(pt.deg)
+            return Point(
+                c.x + pt.radius * math.cos(rad), c.y + pt.radius * math.sin(rad)
+            )
         if isinstance(pt, GridCellPoint):
             node = self.document.get(pt.node)
             grid = (
@@ -510,6 +645,17 @@ class _Resolver:
             if len(inner) != 1:
                 raise ValueError("rounded() needs exactly one shape")
             return [rounded(inner[0], spec.radius)]
+        if isinstance(spec, UseSpec):
+            name = spec.def_name
+            if name not in self.document.defs:
+                raise ValueError(f"unknown def {name!r}")
+            if name in self._def_stack:
+                raise ValueError(f"cyclic def chain involving {name!r}")
+            self._def_stack.add(name)
+            try:
+                return self.expand(self.document.defs[name])
+            finally:
+                self._def_stack.discard(name)
         raise TypeError(f"cannot resolve shape spec {type(spec).__name__}")
 
     def _atomic_shape(self, spec) -> Shape:
@@ -592,6 +738,7 @@ class Node:
     visible: bool = True
     stroke_width: float = 1.0
     outline_paint: object = None
+    markers: list | None = None
 
     def to_dict(self) -> dict:
         d = {
@@ -605,21 +752,44 @@ class Node:
         }
         if self.outline_paint is not None:
             d["outline_paint"] = _paint_to_dict(self.outline_paint)
+        if self.markers:
+            d["markers"] = [
+                {
+                    "placement": m.placement,
+                    "kind": m.kind,
+                    "size": m.size,
+                    "paint": None if m.paint is None else _paint_to_dict(m.paint),
+                }
+                for m in self.markers
+            ]
         return d
 
     @staticmethod
     def from_dict(d: dict) -> Node:
+        markers = None
+        for m in d.get("markers", []):
+            if markers is None:
+                markers = []
+            markers.append(
+                Marker(
+                    placement=m["placement"],
+                    kind=m["kind"],
+                    size=float(m["size"]),
+                    paint=None if m.get("paint") is None else _paint_from_dict(m["paint"]),
+                )
+            )
         return Node(
             id=d["id"],
             name=d["name"],
             op=d["op"],
+            visible=d.get("visible", True),
             shape=_spec_from_dict(d["shape"]),
             paint=_paint_from_dict(d["paint"]),
-            visible=d.get("visible", True),
             stroke_width=d.get("stroke_width", 1.0),
             outline_paint=_paint_from_dict(d["outline_paint"])
             if "outline_paint" in d
             else None,
+            markers=markers,
         )
 
 
@@ -734,6 +904,8 @@ def _spec_to_dict(spec) -> dict:
             "t": list(spec.t),
             "shape": _spec_to_dict(spec.shape),
         }
+    if isinstance(spec, UseSpec):
+        return {"kind": "use", "def": spec.def_name}
     raise TypeError(f"cannot serialize shape spec {type(spec).__name__}")
 
 
@@ -814,7 +986,44 @@ def _spec_from_dict(d: dict):
         )
     if kind == "transform":
         return TransformSpec(tuple(float(v) for v in d["t"]), _spec_from_dict(d["shape"]))
+    if kind == "use":
+        return UseSpec(d["def"])
     raise ValueError(f"unknown shape spec kind {kind}")
+
+
+def _marker_polygons(shape: Shape, marker) -> list[Polygon]:
+    """Baked marker polygons (spec §7.18) for one resolved shape."""
+    if marker.placement not in ("start", "end", "both"):
+        raise ValueError(f"unknown marker placement {marker.placement!r}")
+    if marker.kind not in ("triangle", "bar"):
+        raise ValueError(f"unknown marker kind {marker.kind!r}")
+    if marker.size <= 0:
+        raise ValueError("marker size must be positive")
+    per = shape.perimeter()
+    ds = {"start": [0.0], "end": [per], "both": [0.0, per]}[marker.placement]
+    out = []
+    for d in ds:
+        p = shape.point_at_distance(d)
+        t = shape.tangent_at_distance(d)
+        n = Point(t.y, -t.x)
+        sz = marker.size
+        if marker.kind == "triangle":
+            pts = [
+                p,
+                Point(p.x - t.x * sz + n.x * 0.4 * sz, p.y - t.y * sz + n.y * 0.4 * sz),
+                Point(p.x - t.x * sz - n.x * 0.4 * sz, p.y - t.y * sz - n.y * 0.4 * sz),
+            ]
+        else:  # bar
+            hx, hy = t.x * sz / 2, t.y * sz / 2
+            qx, qy = n.x * sz / 10, n.y * sz / 10
+            pts = [
+                Point(p.x + hx + qx, p.y + hy + qy),
+                Point(p.x + hx - qx, p.y + hy - qy),
+                Point(p.x - hx - qx, p.y - hy - qy),
+                Point(p.x - hx + qx, p.y - hy + qy),
+            ]
+        out.append(Polygon(pts))
+    return out
 
 
 @dataclass
@@ -824,9 +1033,23 @@ class Document:
     width: float
     height: float
     nodes: list[Node] = field(default_factory=list)
+    defs: dict[str, object] = field(default_factory=dict)
     _counter: Iterator[int] = field(
         default_factory=lambda: itertools.count(1), repr=False, compare=False
     )
+
+    def set_markers(self, node_ref: str, markers: list | None) -> None:
+        """Attach markers (spec §7.18) to a stroke node by name or id."""
+        node = self.get(node_ref)
+        node.markers = list(markers) if markers else None
+
+    def define(self, name: str, shape) -> None:
+        """Declare a document-scope shape for ``use`` (spec §7.17)."""
+        if name in self.defs:
+            raise ValueError(f"duplicate def name {name!r}")
+        if any(node.name == name for node in self.nodes):
+            raise ValueError(f"duplicate def name {name!r} (node exists)")
+        self.defs[name] = shape
 
     def get(self, ref: str) -> Node:
         for node in self.nodes:
@@ -853,7 +1076,8 @@ class Document:
         )
 
     def stroke(
-        self, name: str, shape, paint, width: float = 1.0, *, visible: bool = True
+        self, name: str, shape, paint, width: float = 1.0, *,
+        visible: bool = True, markers: list | None = None,
     ) -> Node:
         return self._add(
             Node(
@@ -864,6 +1088,8 @@ class Document:
                 paint,
                 visible,
                 width,
+                None,
+                list(markers) if markers else None,
             )
         )
 
@@ -897,12 +1123,14 @@ class Document:
         pct: float = 0.0,
         start=None,
         direction: Orientation = Orientation.CW,
+        offset=None,
     ) -> AnchorPoint:
         return AnchorPoint(
             node=node_ref,
             pct=pct,
             start=None if start is None else _as_point_value(start),
             direction=direction,
+            offset=None if offset is None else (offset[0], offset[1]),
         )
 
     def grid(
@@ -942,16 +1170,21 @@ class Document:
         )
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "version": 1,
             "canvas": [self.width, self.height],
             "nodes": [node.to_dict() for node in self.nodes],
         }
+        if self.defs:
+            out["defs"] = {n: _spec_to_dict(sp) for n, sp in self.defs.items()}
+        return out
 
     @classmethod
     def from_dict(cls, d: dict) -> Document:
         doc = cls(d["canvas"][0], d["canvas"][1])
         doc._counter = itertools.count(1)
+        for name, spec in d.get("defs", {}).items():
+            doc.defs[name] = _spec_from_dict(spec)
         for node_dict in d["nodes"]:
             node = Node.from_dict(node_dict)
             doc._unique_name(node.name)
@@ -968,11 +1201,18 @@ class Document:
         for node in self.nodes:
             if not node.visible:
                 continue
+            if node.markers and node.op != "stroke":
+                raise ValueError(
+                    f"markers are only valid on stroke nodes ({node.name!r})"
+                )
             for shape in resolver.expand(node.shape):
                 if node.op == "fill":
                     scene.fill(shape, node.paint)
                 elif node.op == "stroke":
                     scene.stroke(shape, node.paint, node.stroke_width)
+                    for marker in node.markers or []:
+                        for pts in _marker_polygons(shape, marker):
+                            scene.fill(pts, marker.paint or node.paint)
                 elif node.op == "outline_fill":
                     scene.outline_fill(
                         shape, node.paint, node.outline_paint, node.stroke_width
@@ -1005,6 +1245,23 @@ class Document:
                         "bbox": [lo.x, lo.y, hi.x, hi.y],
                     }
                 )
+                if node.op == "stroke" and node.markers:
+                    for marker in node.markers:
+                        for pts in _marker_polygons(shape, marker):
+                            lo, hi = pts.bbox()
+                            out.append(
+                                {
+                                    "id": node.id,
+                                    "op": "fill",
+                                    "shape": _shape_to_dict(pts),
+                                    "paint": _paint_to_dict(
+                                        marker.paint or node.paint
+                                    ),
+                                    "stroke_width": 1.0,
+                                    "outline_paint": None,
+                                    "bbox": [lo.x, lo.y, hi.x, hi.y],
+                                }
+                            )
         return out
 
     def generate_code(self) -> str:
@@ -1119,10 +1376,11 @@ def _dict_has_anchor(obj) -> bool:
 
 
 def _spec_has_anchor(spec) -> bool:
-    if isinstance(spec, (AnchorPoint, GridCellPoint, BetweenPoint)):
+    point_refs = (AnchorPoint, GridCellPoint, BetweenPoint, SegmentPoint, PolarPoint)
+    if isinstance(spec, point_refs):
         return True
     if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec, RectSpec, PieSpec)):
-        return isinstance(spec.center, (AnchorPoint, GridCellPoint, BetweenPoint))
+        return isinstance(spec.center, point_refs)
     if isinstance(spec, TransformSpec):
         return _spec_has_anchor(spec.shape)
     if isinstance(spec, PolySpec):
@@ -1197,6 +1455,8 @@ def _spec_expr(spec) -> str:
     if isinstance(spec, TransformSpec):
         t = ", ".join(_fmt(v) for v in spec.t)
         return f"wvd.TransformSpec(t=({t}), shape={_spec_expr(spec.shape)})"
+    if isinstance(spec, UseSpec):
+        return f"wvd.UseSpec({spec.def_name!r})"
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
 
@@ -1239,7 +1499,23 @@ def _generator_expr(spec) -> str:
     return f"wvd.RoundedSpec(shape={_spec_expr(spec.shape)}, radius={_fmt(spec.radius)})"
 
 
+def _offset_expr(offset) -> str:
+    if offset is None:
+        return ""
+    return f", offset=({_fmt(offset[0])}, {_fmt(offset[1])})"
+
+
 def _point_spec_expr(pt) -> str:
+    if isinstance(pt, PolarPoint):
+        return (
+            f"wvd.PolarPoint(center={_point_spec_expr(pt.center)},"
+            f" radius={_fmt(pt.radius)}, deg={_fmt(pt.deg)})"
+        )
+    if isinstance(pt, SegmentPoint):
+        return (
+            f"wvd.SegmentPoint({pt.node!r}, {pt.index}, pct={_fmt(pt.pct)}"
+            f"{_offset_expr(pt.offset)})"
+        )
     if isinstance(pt, BetweenPoint):
         return (
             f"wvd.BetweenPoint(a={_point_spec_expr(pt.a)},"
@@ -1250,6 +1526,7 @@ def _point_spec_expr(pt) -> str:
         if pt.start is not None:
             args += f", start={_point_expr(pt.start)}"
         args += f", direction=wv.{pt.direction.name}"
+        args += _offset_expr(pt.offset)
         return f"doc.anchor({args})"
     if isinstance(pt, GridCellPoint):
         args = f"{pt.node!r}, {pt.col}, {pt.row}"
@@ -1351,7 +1628,7 @@ def _shape_expr(spec) -> str:
         return (
             f"wvd.RoundedSpec(shape={_shape_expr(spec.shape)}, radius={_fmt(spec.radius)})"
         )
-    if isinstance(spec, (RectSpec, PieSpec, TransformSpec)):
+    if isinstance(spec, (RectSpec, PieSpec, TransformSpec, UseSpec)):
         return _spec_expr(spec)
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
@@ -1375,6 +1652,8 @@ def _generate_code(doc: Document) -> str:
         "from windvg.document import Document",
     ]
     lines += ["", f"doc = Document({_fmt(doc.width)}, {_fmt(doc.height)})"]
+    for def_name, def_spec in doc.defs.items():
+        lines.append(f"doc.define({def_name!r}, {_spec_expr(def_spec)})")
     for node in doc.nodes:
         lines.append("")
         lines.append(f"# {node.name}")
@@ -1400,4 +1679,15 @@ def _generate_code(doc: Document) -> str:
         if not node.visible:
             call_args.append("visible=False")
         lines.append(f"doc.{method}({', '.join(call_args)})")
+        if node.markers:
+            marker_exprs = []
+            for m in node.markers:
+                expr = f"wvd.Marker({m.placement!r}, {m.kind!r}, {_fmt(m.size)}"
+                if m.paint is not None:
+                    expr += f", {_paint_expr(m.paint)}"
+                expr += ")"
+                marker_exprs.append(expr)
+            lines.append(
+                f"doc.set_markers({node.name!r}, [{', '.join(marker_exprs)}])"
+            )
     return "\n".join(lines) + "\n"
