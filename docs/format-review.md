@@ -237,6 +237,10 @@ Each weakness is tagged with a **remedy tier**:
   warning. Requires a documented *fidelity-tier* policy.
 - **Tier C** — impossible without changes to TinyVG itself.
 
+The cross-language rationale for these tiers — what TikZ and SVG offer,
+what wvg defers, and what it declines on purpose — lives in
+[comparison.md](comparison.md).
+
 ### Blocking
 
 **W1 — No text.** *Tier B (now), Tier A-hard (later).* Labels are most of

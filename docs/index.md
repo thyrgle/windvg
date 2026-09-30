@@ -52,6 +52,7 @@ ext
 api
 language
 format-review
+comparison
 extensions
 ```
 
