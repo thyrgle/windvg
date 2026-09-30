@@ -251,6 +251,13 @@ def _point_to_dict(pt) -> list | dict:
     raise TypeError(f"cannot serialize point {pt!r}")
 
 
+def _offset_xy(offset) -> tuple:
+    """Accept a tuple or Point for a (dx, dy) offset."""
+    if hasattr(offset, "x"):
+        return (offset.x, offset.y)
+    return (offset[0], offset[1])
+
+
 def _point_from_dict(d: list | dict):
     if isinstance(d, dict):
         if "anchor" in d:
@@ -585,7 +592,9 @@ class _Resolver:
                 origin = Point(origin[0], origin[1])
             p = Point(origin.x + pt.col * grid.dx, origin.y + pt.row * grid.dy)
             if pt.offset is not None:
-                p = p + pt.offset
+                p = Point(
+                    p.x + _offset_xy(pt.offset)[0], p.y + _offset_xy(pt.offset)[1]
+                )
             return p
         if isinstance(pt, Point):
             return pt
