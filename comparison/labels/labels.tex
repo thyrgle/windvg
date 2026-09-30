@@ -1,0 +1,11 @@
+\documentclass[tikz]{standalone}
+\begin{document}
+\begin{tikzpicture}[x=1pt,y=-1pt, every node/.style={font=\sffamily}]
+  \fill[blue!30] (60,70) circle (30);
+  \fill[green!40] (125,48) rectangle (195,92);
+  \draw[color=black!70, line width=2] (90,70) -- (125,70);
+  \node at (60,26) {Sensor};
+  \node at (160,26) {Actuator};
+  \node[color=black!70] at (107,64) {link};
+\end{tikzpicture}
+\end{document}

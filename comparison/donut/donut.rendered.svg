@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <defs>
+    <radialGradient id="g0" gradientUnits="userSpaceOnUse" cx="100.0" cy="80.0" r="60.0">
+      <stop offset="0" stop-color="#EF9A9A"/>
+      <stop offset="1" stop-color="#B71C1C"/>
+    </radialGradient>
+  </defs>
+  <path  fill-rule="evenodd" fill="url(#g0)" d="M 180.0 100.0 A 80.0 80.0 0 0 1 20.0 100.0 A 80.0 80.0 0 0 1 180.0 100.0 Z M 132.0 100.0 A 32.0 32.0 0 0 1 68.0 100.0 A 32.0 32.0 0 0 1 132.0 100.0 Z"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="155.98148623335732,107.14655155333145 152.49982781304936,120.70671580913228"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="138.2905916561374,141.45878182753253 126.907181001479,149.6085034097346"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="102.6831036904866,156.37198732159527 88.72436515930971,155.2979209278198"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="65.82016168868117,144.90811344303057 55.81754417382192,135.11282667584345"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="44.9503458993315,112.4312341863852 43.58418530270341,98.49805058663956"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="49.83887507244091,74.13764229615153 57.748413120390055,62.5860533202554"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="78.19835207796146,47.94533500363803 91.68262801312866,44.180457515024294"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="116.75906244453105,46.10998398608228 129.50863369581754,51.89344600362585"/>
+  <polyline fill="none" stroke="#FFFFFF" stroke-width="4.0" points="147.47802123707248,69.4903703822532 153.52722172030025,82.1160257519248"/>
+</svg>

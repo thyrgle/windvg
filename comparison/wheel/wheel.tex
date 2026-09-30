@@ -1,0 +1,9 @@
+\documentclass[tikz]{standalone}
+\begin{document}
+\begin{tikzpicture}[x=1pt,y=-1pt]
+  \fill[color=black!80] (100,100) circle (14);
+  \draw[color=black!80, line width=5] (100,100) circle (70);
+  \foreach \a in {0,30,...,330}
+    \draw[color=black!54, line width=3] ([shift={(100,100)}] \a:70) -- ([shift={(100,100)}] \a:86);
+\end{tikzpicture}
+\end{document}

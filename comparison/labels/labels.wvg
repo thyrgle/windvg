@@ -1,0 +1,8 @@
+wvg 6 scene 220 140
+
+fill sensor = circle center=(60,70) radius=30 color=#90CAF9
+fill actuator = rect center=(160,70) size=(70,44) color=#A5D6A7
+stroke link = line p1=(90,70) p2=(125,70) color=#455A64 width=2
+text t1 = at=(60,26) content="Sensor" size=13 anchor=middle
+text t2 = at=(160,26) content="Actuator" size=13 anchor=middle
+text t3 = at=(107,64) content="link" size=10 anchor=middle color=#455A64

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="170" viewBox="0 0 220 170">
+  <polyline fill="none" stroke="#333333" stroke-width="2.0" points="30.0,110.0 190.0,50.0"/>
+  <circle fill="none" stroke="#333333" stroke-width="2.0" cx="110.0" cy="80.0" r="45.0"/>
+  <circle fill="#E53935" cx="67.86818408845811" cy="95.79943096682821" r="5.0"/>
+  <circle fill="#43A047" cx="152.13181591154188" cy="64.20056903317179" r="5.0"/>
+  <path fill="none" stroke="#1E88E5" stroke-width="3.0" d="M 40.0 140.0 A 98.99494936611666 98.99494936611666 0 0 1 180.0 140.0"/>
+  <path fill="none" stroke="#FDD835" stroke-width="2.0" d="M 40.000000000000014 140.0 A 140.00000000000003 140.00000000000003 0 0 0 180.00000000000006 139.99999999999997"/>
+</svg>

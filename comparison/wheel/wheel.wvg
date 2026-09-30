@@ -1,0 +1,8 @@
+wvg 6 scene 200 200
+
+let R = 70
+fill hub = circle center=(100,100) radius=14 color=#37474F
+stroke rim = circle center=(100,100) radius=R color=#37474F width=5
+repeat i = 12 {
+  stroke tick~ = line p1=@rim ((i - 1) * 30)% p2=@rim ((i - 1) * 30)% tangent 16 deg 90 color=#607D8B width=3
+}
