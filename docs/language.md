@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 7**
+**Version 8**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -21,8 +21,10 @@ Version 5 added **tangent offsets** (§7.20) — local-frame vector offsets
 on track-based point references. Version 6 added **named constants**
 (`let`), **arithmetic expressions** wherever a number is expected, and
 the **bounded `repeat` block** — all resolved at parse time (§7.21), so
-documents remain data. Version 7 adds the **`arc_between` connector**
-(§7.22) and the **`intersects` point form** (§7.23). See §12 and
+documents remain data. Version 7 added the **`arc_between` connector**
+(§7.22) and the **`intersects` point form** (§7.23). Version 8 makes
+the node **`color`**, the text **`size`**, and the arc **`start_deg`**
+optional (§5.4) — every existing file parses identically. See §12 and
 `comparison.md` (the roadmap decisions).
 
 The language is the textual surface of the existing windvg document model.
@@ -169,7 +171,7 @@ let_stmt     = "let" , IDENT , "=" , expr ;
 repeat_stmt  = "repeat" , IDENT , "=" , expr , "{" , { top } , "}" ;
 def_stmt     = "def" , IDENT , "=" , shape ;
 text_stmt    = "text" , IDENT , "=" , "at" , "=" , point , "content" , "=" , STRING ,
-               "size" , "=" , NUMBER , [ "font" , "=" , IDENT ] ,
+               [ "size" , "=" , NUMBER ] , [ "font" , "=" , IDENT ] ,
                [ "anchor" , "=" , align_h ] , [ "color" , "=" , paint ] , [ "hidden" ] ;
 align_h      = "start" | "middle" | "end" ;
 
@@ -177,17 +179,17 @@ paint_decl   = "paint" , IDENT , "=" , paint ;
 
 fill         = "fill" , IDENT , "=" , shape ,
                [ "transform" , "=" , transform_expr ] ,
-               "color" , "=" , paint , [ "hidden" ] ;
+               [ "color" , "=" , paint ] , [ "hidden" ] ;
 stroke       = "stroke" , IDENT , "=" , shape ,
                [ "transform" , "=" , transform_expr ] ,
-               "color" , "=" , paint , [ "width" , "=" , NUMBER ] ,
+               [ "color" , "=" , paint ] , [ "width" , "=" , NUMBER ] ,
                [ "marker" , "=" , placement , kind , NUMBER , [ paint ] ] ,
                [ "hidden" ] ;
 placement    = "start" | "end" | "both" ;
 kind         = "triangle" | "bar" ;
 outline_fill = "outline_fill" , IDENT , "=" , shape ,
                [ "transform" , "=" , transform_expr ] ,
-               "color" , "=" , paint , "outline" , "=" , paint ,
+               [ "color" , "=" , paint ] , "outline" , "=" , paint ,
                [ "width" , "=" , NUMBER ] , [ "hidden" ] ;
 guide        = "guide" , IDENT , "=" , guide_shape ;
 group        = "group" , [ transform_expr ] , "{" , { top } , "}" ;
@@ -215,7 +217,7 @@ shape        = "circle" , "center" , "=" , point , "radius" , "=" , NUMBER
              | "ellipse" , "center" , "=" , point , "rx" , "=" , NUMBER ,
                "ry" , "=" , NUMBER , [ "rotation_deg" , "=" , NUMBER ]
              | "arc" , "center" , "=" , point , "radius" , "=" , NUMBER ,
-               "start_deg" , "=" , NUMBER , "sweep_deg" , "=" , NUMBER
+               [ "start_deg" , "=" , NUMBER ] , "sweep_deg" , "=" , NUMBER
              | "arc_between" , "p1" , "=" , point , "p2" , "=" , point ,
                "deg" , "=" , NUMBER
              | "rect" , "center" , "=" , point , "size" , "=" , literal
@@ -358,9 +360,39 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` through `wvg 7` — the integer is the format version. Each
+`wvg 1` through `wvg 8` — the integer is the format version. Each
 version is strictly additive (§12): every older file is a valid newer
-file. Loaders accept 1–7 and reject anything else.
+file. Loaders accept 1–8 and reject anything else.
+
+### 5.4 Defaults
+
+Optional properties resolve to fixed defaults; shape-defining numbers
+never do — a missing radius or sweep is an error, not a surprise.
+
+| property | default | notes |
+| --- | --- | --- |
+| anchor `pct` | `0%` | |
+| anchor direction | `cw` | |
+| node `color` (v8) | `black` | fill, stroke, outline_fill, text |
+| `width` | `1` | stroke, outline_fill |
+| outline `width` | `1` | outline_fill |
+| text `size` (v8) | `16` | |
+| text `font` | `sans` | |
+| text `anchor` | `start` | |
+| arc/pie/chord `start_deg` (v8 for arc) | `0` | |
+| star `points` | `5` | |
+| ellipse `rotation_deg` | `0` | |
+| regular_polygon `start_angle_deg` | `0` | |
+| star `start_angle_deg` | `0` | |
+| along `offset_pct` | `0%` | |
+| along/polar `align` | `none` / off | |
+| along direction | `cw` | |
+| polar `start_deg` | `0` | |
+| intersects `k` | `1` | |
+| repeat index start | `1` | |
+
+Emitters omit properties whose value equals the default, so a
+round-tripped document is at least as short as the authored one.
 
 ### 5.2 Scene
 
@@ -1133,7 +1165,8 @@ the suite.
   Markers, symbol defs/use, the text construct, and tangent offsets
   arrived in v3/v4/v5; constants, expressions, and bounded repeat
   arrived in v6; arc connectors and path intersections arrived in v7;
-  dash patterns remain a Tier B candidate.
+  property defaults (node color, text size, arc start_deg) arrived in
+  v8; dash patterns remain a Tier B candidate.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
