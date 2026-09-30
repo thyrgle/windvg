@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 8**
+**Version 9**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -22,10 +22,11 @@ on track-based point references. Version 6 added **named constants**
 (`let`), **arithmetic expressions** wherever a number is expected, and
 the **bounded `repeat` block** — all resolved at parse time (§7.21), so
 documents remain data. Version 7 added the **`arc_between` connector**
-(§7.22) and the **`intersects` point form** (§7.23). Version 8 makes
+(§7.22) and the **`intersects` point form** (§7.23). Version 8 made
 the node **`color`**, the text **`size`**, and the arc **`start_deg`**
-optional (§5.4) — every existing file parses identically. See §12 and
-`comparison.md` (the roadmap decisions).
+optional (§5.4). Version 9 adds **anonymous nodes** (§5.5) and
+**positional shape properties** (§5.6) — every existing file parses
+identically. See §12 and `comparison.md` (the roadmap decisions).
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -167,27 +168,32 @@ file         = "wvg" , INTEGER , scene , { top } ;
 scene        = "scene" , NUMBER , NUMBER ;
 
 top          = paint_decl | let_stmt | def_stmt | fill | stroke | outline_fill | guide | group | text_stmt | repeat_stmt ;
+
+(* v9: the node name may be omitted; every shape also accepts its
+   required properties positionally in the canonical order of §5.6.
+   The named forms below remain the canonical spelling. *)
 let_stmt     = "let" , IDENT , "=" , expr ;
 repeat_stmt  = "repeat" , IDENT , "=" , expr , "{" , { top } , "}" ;
 def_stmt     = "def" , IDENT , "=" , shape ;
-text_stmt    = "text" , IDENT , "=" , "at" , "=" , point , "content" , "=" , STRING ,
+text_stmt    = "text" , [ IDENT , "=" ] , [ "at" , "=" ] , point ,
+               [ "content" , "=" ] , STRING ,
                [ "size" , "=" , NUMBER ] , [ "font" , "=" , IDENT ] ,
                [ "anchor" , "=" , align_h ] , [ "color" , "=" , paint ] , [ "hidden" ] ;
 align_h      = "start" | "middle" | "end" ;
 
 paint_decl   = "paint" , IDENT , "=" , paint ;
 
-fill         = "fill" , IDENT , "=" , shape ,
+fill         = "fill" , [ IDENT , "=" ] , shape ,
                [ "transform" , "=" , transform_expr ] ,
                [ "color" , "=" , paint ] , [ "hidden" ] ;
-stroke       = "stroke" , IDENT , "=" , shape ,
+stroke       = "stroke" , [ IDENT , "=" ] , shape ,
                [ "transform" , "=" , transform_expr ] ,
                [ "color" , "=" , paint ] , [ "width" , "=" , NUMBER ] ,
                [ "marker" , "=" , placement , kind , NUMBER , [ paint ] ] ,
                [ "hidden" ] ;
 placement    = "start" | "end" | "both" ;
 kind         = "triangle" | "bar" ;
-outline_fill = "outline_fill" , IDENT , "=" , shape ,
+outline_fill = "outline_fill" , [ IDENT , "=" ] , shape ,
                [ "transform" , "=" , transform_expr ] ,
                [ "color" , "=" , paint ] , "outline" , "=" , paint ,
                [ "width" , "=" , NUMBER ] , [ "hidden" ] ;
@@ -360,9 +366,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` through `wvg 8` — the integer is the format version. Each
+`wvg 1` through `wvg 9` — the integer is the format version. Each
 version is strictly additive (§12): every older file is a valid newer
-file. Loaders accept 1–8 and reject anything else.
+file. Loaders accept 1–9 and reject anything else.
 
 ### 5.4 Defaults
 
@@ -393,6 +399,57 @@ never do — a missing radius or sweep is an error, not a surprise.
 
 Emitters omit properties whose value equals the default, so a
 round-tripped document is at least as short as the authored one.
+
+### 5.5 Anonymous nodes (v9)
+
+`fill`, `stroke`, `outline_fill`, and `text` may omit the node name and
+its `=`:
+
+    fill circle (100,100) 80 color=red
+
+The node then receives a deterministic generated name — the shape
+keyword followed by a document-wide counter (`circle1`, `line2`, …),
+sharing the one name space. Anonymous nodes cannot be referenced by
+`@anchors`, `intersects`, or `use`; referencing a missing name remains
+an error. Name what you aim at. `def`, `paint`, `let`, and `guide`
+keep required names. Emitters always write the materialized name, so
+round-trips are stable. Generated names are declaration-order-dependent:
+inserting an anonymous node shifts later generated names, which is
+acceptable for unreferenced decorations — anything referenced should
+carry an explicit name.
+
+### 5.6 Positional shape properties (v9)
+
+Every shape accepts its **required** properties positionally, in the
+canonical order of the named grammar, with any remaining (optional or
+later) properties named afterward. Positional arguments must precede
+named ones. The canonical orders:
+
+| shape | positional order | named-only after |
+| --- | --- | --- |
+| circle | center, radius | — |
+| ellipse | center, rx, ry | rotation_deg |
+| rect | center, size | — |
+| line | p1, p2 | — |
+| polygon / polyline | points | — |
+| path | subpaths | — |
+| arc | center, radius | start_deg, sweep_deg |
+| pie / chord | center, radius | start_deg, sweep_deg |
+| arc_between | p1, p2 | deg |
+| regular_polygon | center, radius | sides, start_angle_deg |
+| star | center, outer_radius, inner_radius | points, start_angle_deg |
+| rounded | shape | radius |
+| along | track, motifs | n, offset_pct, align, direction |
+| polar | center, motifs | n, radius, start_deg, align |
+| grid | motifs | cols, rows, dx, dy, origin |
+| compound | shapes | — |
+| use | def name | — |
+| text | at, content | size, font, anchor, color, hidden |
+
+Optional properties may be skipped positionally only when everything
+after them is also skipped or named — `pie (100,100) 40 sweep_deg=135`
+is valid, `pie (100,100) 40 90 135` is not. Existing named forms parse
+identically; both spellings produce the same resolved document.
 
 ### 5.2 Scene
 
@@ -1166,7 +1223,8 @@ the suite.
   arrived in v3/v4/v5; constants, expressions, and bounded repeat
   arrived in v6; arc connectors and path intersections arrived in v7;
   property defaults (node color, text size, arc start_deg) arrived in
-  v8; dash patterns remain a Tier B candidate.
+  v8; anonymous nodes and positional shape properties arrived in v9;
+  dash patterns remain a Tier B candidate.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
