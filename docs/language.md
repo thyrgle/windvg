@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 3**
+**Version 4**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -8,13 +8,16 @@ shapes' perimeters with anchors, arranges repetitions, and styles the results
 with fills and strokes. It contains no arithmetic, no variables, and no code
 execution — opening a `.wvg` file can never run a program.
 
-Version 3 is strictly additive over versions 1 and 2: every older file is
-a valid v3 file with identical meaning. Loaders accept 1, 2, and 3 and
-reject anything newer. Version 2 added node `transform=` (baked at
-resolve), `group` statements, the `rect`, `pie`, and `chord` shapes, the
-`between` point form, and the `matrix` transform expression. Version 3
-adds **point offsets**, the **polar point form**, **symbol defs and use**,
-and **stroke markers** — the relationships release. See §12.
+Version 4 is strictly additive over versions 1–3: every older file is a
+valid v4 file with identical meaning. Loaders accept 1–4 and reject
+anything newer. Version 2 added node `transform=` (baked at resolve),
+`group` statements, the `rect`, `pie`, and `chord` shapes, the `between`
+point form, and the `matrix` transform expression. Version 3 added
+**point offsets**, the **polar point form**, **symbol defs and use**, and
+**stroke markers**. Version 4 adds the **text node** (§7.19) and the
+**fidelity-tier policy** (§11): text survives in `.wvg` and SVG export;
+TinyVG export of text requires a font-baking host or fails by default.
+See §12.
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -155,8 +158,12 @@ deterministic and canonical formatting trivial.
 file         = "wvg" , INTEGER , scene , { top } ;
 scene        = "scene" , NUMBER , NUMBER ;
 
-top          = paint_decl | def_stmt | fill | stroke | outline_fill | guide | group ;
+top          = paint_decl | def_stmt | fill | stroke | outline_fill | guide | group | text_stmt ;
 def_stmt     = "def" , IDENT , "=" , shape ;
+text_stmt    = "text" , IDENT , "=" , "at" , "=" , point , "content" , "=" , STRING ,
+               "size" , "=" , NUMBER , [ "font" , "=" , IDENT ] ,
+               [ "anchor" , "=" , align_h ] , [ "color" , "=" , paint ] , [ "hidden" ] ;
+align_h      = "start" | "middle" | "end" ;
 
 paint_decl   = "paint" , IDENT , "=" , paint ;
 
@@ -260,6 +267,7 @@ between_ref  = "between" , point , point , percent , [ "+" , literal ] ;
 polar_ref    = "polar" , "center" , "=" , point , "radius" , "=" , NUMBER ,
                "deg" , "=" , NUMBER ;
 
+STRING        = '"' , { STRING_CHAR }, '"' ;   (* '"' escaped as \" , backslash as \\ *)
 transform_expr = "translate" , NUMBER , NUMBER
                | "rotate" , NUMBER , [ "about" , literal ]
                | "scale" , NUMBER , [ NUMBER ] , [ "about" , literal ]
@@ -295,6 +303,9 @@ Notes:
   that expands to it at resolve time (§7.17).
 - `marker` decorates a stroke with baked arrowheads or bars at the ends of
   the shape's track (§7.18).
+- `text_stmt`: a text node (§7.19). `at` is a full point (parametric);
+  `anchor` defaults to `start`. Strings are double-quoted with `\\"` and
+  `\\` escapes; line breaks inside strings are not allowed.
 
 --------------------------------------------------------------------------------
 
@@ -305,9 +316,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1`, `wvg 2`, or `wvg 3` — the integer is the format version. Each
+`wvg 1` through `wvg 4` — the integer is the format version. Each
 version is strictly additive (§12): every older file is a valid newer
-file. Loaders accept 1, 2, and 3 and reject anything else.
+file. Loaders accept 1–4 and reject anything else.
 
 ### 5.2 Scene
 
@@ -381,6 +392,7 @@ The IR is the JSON produced by `windvg.document.Document.to_dict` /
 | `def name = shape` | document-level `defs` entry `{"name": shape}` |
 | `use name` (shape position) | `{"kind":"use","def":"name"}` |
 | `marker = end triangle 10` | node `"markers":[{…}]` (§7.18) |
+| `text label = at=p content="s" size=n [font=f] [anchor=a] [color=c] [hidden]` | node `op:"text"`, shape `{"kind":"text","at":p,"content":"s","size":n,"font":"sans","anchor":"start"}` (§7.19) |
 | `@n cw p% from (x,y)` | `{"anchor":{"node":"n","pct":p,"start":[x,y],"direction":"cw"}}` (omit `start`/`direction` at defaults) |
 | `@n seg k p%` | `{"segment":{"node":"n","index":k,"pct":p}}` |
 | `@n[c,r] + (x,y)` | `{"grid_cell":{"node":"n","col":c,"row":r,"offset":[x,y]}}` (omit `offset` when absent) |
@@ -652,7 +664,7 @@ node or token):
 | Category | Conditions |
 | --- | --- |
 | Syntax | any grammar violation; wrong version; missing/duplicate `scene` |
-| Names | duplicate node, paint, or def name; name collision across kinds; reserved word used as name; unknown `@` reference; unknown `use` def; paint used before declaration |
+| Names | duplicate node, paint, or def name; name collision across kinds; reserved word used as name; unknown `@` reference; unknown `use` def; unknown text font; paint used before declaration |
 | References | anchor target expands to no shapes (grid guide, `n = 0` generator) or to a compound; segment target is not a polygon/polyline or is out of edge bounds; grid-cell target is not a grid guide; cyclic reference chains; cyclic `def` chains |
 | Shapes | circle/arc/pie/chord radius ≤ 0; arc/pie/chord sweep outside `0 < |sweep| < 360`; ellipse rx or ry ≤ 0; rect size components ≤ 0; polygon with < 3 points or zero shoelace; polyline with < 2 points; path with zero subpaths or an empty subpath; regular_polygon sides < 3; star points < 2 |
 | Generators | along track expands to ≠ 1 shape; polar radius ≤ 0; grid cols or rows < 1 |
@@ -804,6 +816,34 @@ tangent at `d = perimeter` points outward; on closed tracks the "end" is
 the origin with the origin tangent — `end` markers are meant for open
 tracks (lines, polylines, arcs, open paths).
 
+### 7.19 Text (fidelity tier B)
+
+`text label = at=p content="s" size=n [font=f] [anchor=a] [color=c]
+[hidden]` declares a **text node**: the string `content`, positioned with
+its baseline **start** at the resolved point `p` (a full point — anchors
+and offsets compose), rendered at `size` in the font `f` (v1 bundles
+`sans` only), horizontally aligned per `anchor` (`start`: baseline starts
+at `p`; `middle`: centered on `p.x`; `end`: baseline ends at `p.x`), and
+filled with `color` (default black).
+
+**Fidelity tier.** TinyVG 1.0 cannot encode text, so text is the first
+**tier B** construct: it survives in `.wvg` documents and SVG export
+(live, editable `<text>`), and is **dropped at TinyVG export** — encoders
+fail with a diagnostic unless an explicit drop-text option is set, and
+the diagnostic lists the dropped nodes. Hosts MAY bake text to outline
+paths at resolve time using a bundled font (recommended: Noto Sans
+Regular, OFL 1.1); baked geometry is engine-local and exempt from
+cross-host byte-exact conformance (§9).
+
+Resolution: `p = resolve(at)`; the string's total advance width `W` is
+measured in the resolved font at `size`; the pen origin is
+`p.x − (W/2 | W | 0)` for `middle`/`end`/`start`; each character maps
+through the font cmap (missing → `.notdef`), advances by its `hmtx`
+width scaled by `size/unitsPerEm`, and its TrueType outline (y-up) is
+emitted flipped into y-down at the pen position. Kerning is off in v1.
+Font bundles are resolver components: the *syntax* is core, the *glyphs*
+are pluggable with fallback (missing font → placeholder boxes + warning).
+
 --------------------------------------------------------------------------------
 
 ## 8. TinyVG encoding contract
@@ -905,8 +945,13 @@ cell offsets; all color spellings and the color-table dedup rules; gradient
 paints; the 16→32-bit coordinate upgrade; the > 64-point outline fallback;
 and the ellipse-rotation negation.
 
-Implementations are encouraged to expose the IR and ops JSON verbatim in
-their APIs so third-party tooling can diff against the suite.
+Text documents (§7.19, tier B) are exempt from the byte-exact `.tvg`
+comparison: hosts bake glyphs with engine-local settings, so text
+documents conform via their SVG export (exact `<text>` string match) and
+their resolved metadata (at/content/size/anchor). Non-text documents
+remain byte-exact. Implementations are encouraged to expose the IR and
+ops JSON verbatim in their APIs so third-party tooling can diff against
+the suite.
 
 --------------------------------------------------------------------------------
 
@@ -920,10 +965,11 @@ their APIs so third-party tooling can diff against the suite.
   rather than guess. Unknown properties are errors (strict parsing) — there
   are no optional extensions inside a version.
 - Excluded from v2, with room to add later: arithmetic expressions,
-  dash patterns, clip paths and masks (Tier B/C — see
-  `format-review.md` §5), `rule=nonzero`, star polygons via skip
-  traversal (`star_polygon`), segment references on paths, and path
-  tolerance configuration. Markers and symbol defs/use arrived in v3.
+  clip paths and masks (Tier B/C — see `format-review.md` §5),
+  `rule=nonzero`, star polygons via skip traversal (`star_polygon`),
+  segment references on paths, and path tolerance configuration.
+  Markers, symbol defs/use, and the text construct arrived in v3/v4;
+  dash patterns remain a Tier B candidate.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
