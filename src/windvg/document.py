@@ -44,10 +44,11 @@ __all__ = [
     "AlongSpec",
     "AnchorPoint",
     "ArcSpec",
+    "ArcBetweenSpec",
     "BetweenPoint",
     "PolarPoint",
+    "IntersectsPoint",
     "Marker",
-    "PolarPoint",
     "CircleSpec",
     "CompoundSpec",
     "Document",
@@ -248,7 +249,10 @@ class PolarPoint:
 
 
 def _point_to_dict(pt) -> list | dict:
-    if isinstance(pt, (AnchorPoint, GridCellPoint, BetweenPoint, SegmentPoint, PolarPoint)):
+    parametric = (
+        AnchorPoint, GridCellPoint, BetweenPoint, SegmentPoint, PolarPoint, IntersectsPoint
+    )
+    if isinstance(pt, parametric):
         return pt.to_dict()
     if isinstance(pt, Point):
         return [pt.x, pt.y]
@@ -299,6 +303,8 @@ def _point_from_dict(d: list | dict):
             return SegmentPoint.from_dict(d)
         if "polar" in d:
             return PolarPoint.from_dict(d)
+        if "intersects" in d:
+            return IntersectsPoint.from_dict(d)
         raise ValueError(f"unknown point reference {sorted(d)!r}")
     return Point(d[0], d[1])
 
@@ -401,7 +407,25 @@ def _shape_from_dict(d: dict):
         return Path.from_dict(d)
     raise ValueError(f"unknown shape kind {kind}")
 
+@dataclass(frozen=True, slots=True)
+class IntersectsPoint:
+    """The k-th crossing point of two nodes' tracks (spec §7.23). Chains
+    are sampled through the track protocol; ``k`` is 1-based and counted
+    in chain order."""
 
+    a: str
+    b: str
+    k: int = 1
+
+    def to_dict(self) -> dict:
+        return {"intersects": {"a": self.a, "b": self.b, "k": self.k}}
+
+    @staticmethod
+    def from_dict(d: dict) -> IntersectsPoint:
+        payload = d["intersects"]
+        return IntersectsPoint(
+            a=payload["a"], b=payload["b"], k=int(payload.get("k", 1))
+        )
 @dataclass(frozen=True, slots=True)
 class CircleSpec:
     center: object
@@ -422,6 +446,18 @@ class ArcSpec:
     radius: float
     start_deg: float
     sweep_deg: float
+
+
+@dataclass(frozen=True, slots=True)
+class ArcBetweenSpec:
+    """The circular arc from ``p1`` to ``p2`` subtending ``deg`` degrees
+    (spec §7.22). The sign of ``deg`` is the travel direction (positive is
+    clockwise on screen); the radius derives from the chord. Resolves to an
+    ``Arc`` — stroke-only, like every arc."""
+
+    p1: object
+    p2: object
+    deg: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -651,6 +687,16 @@ class _Resolver:
             if pt.offset is not None:
                 p = Point(p.x + pt.offset[0], p.y + pt.offset[1])
             return p
+        if isinstance(pt, IntersectsPoint):
+            ca = _track_chain(self, pt.a)
+            cb = _track_chain(self, pt.b)
+            crossings = _chain_crossings(ca, cb)
+            if pt.k < 1 or pt.k > len(crossings):
+                raise ValueError(
+                    f"no intersection #{pt.k} between {pt.a!r} and {pt.b!r} "
+                    f"(found {len(crossings)})"
+                )
+            return crossings[pt.k - 1]
         if isinstance(pt, PolarPoint):
             c = self.resolve_point(pt.center)
             rad = math.radians(pt.deg)
@@ -690,6 +736,8 @@ class _Resolver:
             return []
         if isinstance(spec, (CircleSpec, EllipseSpec, ArcSpec, RectSpec, PieSpec)):
             return [self._atomic_shape(spec)]
+        if isinstance(spec, ArcBetweenSpec):
+            return [_resolve_arc_between(self, spec)]
         if isinstance(spec, TransformSpec):
             from .ext.transform import Transform, transformed
 
@@ -906,6 +954,13 @@ def _spec_to_dict(spec) -> dict:
             "start_deg": spec.start_deg,
             "sweep_deg": spec.sweep_deg,
         }
+    if isinstance(spec, ArcBetweenSpec):
+        return {
+            "kind": "arc_between",
+            "p1": _point_to_dict(spec.p1),
+            "p2": _point_to_dict(spec.p2),
+            "deg": spec.deg,
+        }
     if isinstance(spec, PolySpec):
         return {
             "kind": "polygon" if spec.closed else "polyline",
@@ -999,7 +1054,7 @@ def _spec_to_dict(spec) -> dict:
 
 def _spec_from_dict(d: dict):
     kind = d["kind"]
-    if kind in ("circle", "ellipse", "arc", "polygon", "polyline", "path"):
+    if kind in ("circle", "ellipse", "arc", "arc_between", "polygon", "polyline", "path"):
         if kind == "circle":
             return CircleSpec(_point_from_dict(d["center"]), d["radius"])
         if kind == "ellipse":
@@ -1009,6 +1064,10 @@ def _spec_from_dict(d: dict):
         if kind == "arc":
             return ArcSpec(
                 _point_from_dict(d["center"]), d["radius"], d["start_deg"], d["sweep_deg"]
+            )
+        if kind == "arc_between":
+            return ArcBetweenSpec(
+                _point_from_dict(d["p1"]), _point_from_dict(d["p2"]), d["deg"]
             )
         if kind == "path":
             return PathSpec(
@@ -1085,6 +1144,60 @@ def _spec_from_dict(d: dict):
             anchor=d.get("anchor", "start"),
         )
     raise ValueError(f"unknown shape spec kind {kind}")
+
+
+def _track_chain(resolver, node: str, samples: int = 256) -> list:
+    """Chain sampling of a node's first shape through the track protocol
+    (spec §7.23): ``samples + 1`` points at ``i · perimeter/samples``."""
+    shape = resolver.first_shape_of(node)
+    step = shape.perimeter() / samples
+    return [shape.point_at_distance(i * step) for i in range(samples + 1)]
+
+
+def _chain_crossings(a: list, b: list) -> list:
+    """Segment-pair crossings of two chains, in chain order (spec §7.23).
+    Parallel segments are skipped; the root is accepted when both
+    parameters lie in [-1e-9, 1+1e-9]."""
+    out = []
+    for i in range(len(a) - 1):
+        a1, a2 = a[i], a[i + 1]
+        d1x, d1y = a2.x - a1.x, a2.y - a1.y
+        for j in range(len(b) - 1):
+            b1, b2 = b[j], b[j + 1]
+            d2x, d2y = b2.x - b1.x, b2.y - b1.y
+            denom = d1x * d2y - d1y * d2x
+            if abs(denom) < 1e-12:
+                continue
+            ex, ey = b1.x - a1.x, b1.y - a1.y
+            ta = (ex * d2y - ey * d2x) / denom
+            tb = (ex * d1y - ey * d1x) / denom
+            if -1e-9 <= ta <= 1 + 1e-9 and -1e-9 <= tb <= 1 + 1e-9:
+                out.append(Point(a1.x + ta * d1x, a1.y + ta * d1y))
+    return out
+
+
+def _resolve_arc_between(resolver, spec) -> Shape:
+    """The circular arc from p1 to p2 subtending deg (spec §7.22) —
+    canonical computation shared by every host."""
+    p = resolver.resolve_point(spec.p1)
+    q = resolver.resolve_point(spec.p2)
+    dx, dy = q.x - p.x, q.y - p.y
+    c = math.sqrt(dx * dx + dy * dy)
+    if c == 0.0:
+        raise ValueError("arc_between endpoints must differ")
+    if spec.deg == 0.0 or abs(spec.deg) >= 360.0:
+        raise ValueError("arc_between sweep must be nonzero and within ±360")
+    half = math.radians(abs(spec.deg)) / 2.0
+    c2 = c / 2.0
+    r = c2 / math.sin(half)
+    h = math.sqrt(r * r - c2 * c2)
+    ux, uy = dx / c, dy / c
+    nx, ny = -uy, ux
+    sign = 1.0 if spec.deg > 0 else -1.0
+    cx = (p.x + q.x) / 2.0 + nx * h * sign
+    cy = (p.y + q.y) / 2.0 + ny * h * sign
+    a0 = math.degrees(math.atan2(p.y - cy, p.x - cx))
+    return Arc((cx, cy), r, a0, spec.deg)
 
 
 def _resolve_text_node(resolver, scene, node) -> None:
@@ -1588,6 +1701,13 @@ def _spec_expr(spec) -> str:
             f"wvd.ArcSpec(center={center}, radius={radius},"
             f" start_deg={_fmt(spec.start_deg)}, sweep_deg={_fmt(spec.sweep_deg)})"
         )
+    if isinstance(spec, ArcBetweenSpec):
+        p1 = _point_spec_expr(spec.p1)
+        p2 = _point_spec_expr(spec.p2)
+        return (
+            f"wvd.ArcBetweenSpec(p1={p1}, p2={p2},"
+            f" deg={_fmt(spec.deg)})"
+        )
     if isinstance(spec, PolySpec):
         pts = ", ".join(_point_spec_expr(p) for p in spec.points)
         return f"wvd.PolySpec(closed={spec.closed!r}, points=({pts},))"
@@ -1670,6 +1790,10 @@ def _offset_expr(offset) -> str:
 
 
 def _point_spec_expr(pt) -> str:
+    if isinstance(pt, IntersectsPoint):
+        return (
+            f"wvd.IntersectsPoint(a={pt.a!r}, b={pt.b!r}, k={int(pt.k)})"
+        )
     if isinstance(pt, PolarPoint):
         return (
             f"wvd.PolarPoint(center={_point_spec_expr(pt.center)},"
@@ -1792,7 +1916,9 @@ def _shape_expr(spec) -> str:
         return (
             f"wvd.RoundedSpec(shape={_shape_expr(spec.shape)}, radius={_fmt(spec.radius)})"
         )
-    if isinstance(spec, (RectSpec, PieSpec, TransformSpec, UseSpec, TextSpec)):
+    if isinstance(
+        spec, (RectSpec, PieSpec, TransformSpec, UseSpec, TextSpec, ArcBetweenSpec)
+    ):
         return _spec_expr(spec)
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
