@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 5**
+**Version 6**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -8,8 +8,8 @@ shapes' perimeters with anchors, arranges repetitions, and styles the results
 with fills and strokes. It contains no arithmetic, no variables, and no code
 execution — opening a `.wvg` file can never run a program.
 
-Version 5 is strictly additive over versions 1–4: every older file is a
-valid v5 file with identical meaning. Loaders accept 1–5 and reject
+Version 6 is strictly additive over versions 1–5: every older file is a
+valid v6 file with identical meaning. Loaders accept 1–6 and reject
 anything newer. Version 2 added node `transform=` (baked at resolve),
 `group` statements, the `rect`, `pie`, and `chord` shapes, the `between`
 point form, and the `matrix` transform expression. Version 3 added
@@ -17,8 +17,12 @@ point form, and the `matrix` transform expression. Version 3 added
 **stroke markers**. Version 4 added the **text node** (§7.19) and the
 **fidelity-tier policy** (§11): text survives in `.wvg` and SVG export;
 TinyVG export of text requires a font-baking host or fails by default.
-Version 5 adds **tangent offsets** (§7.20) — local-frame vector offsets
-on track-based point references. See §12.
+Version 5 added **tangent offsets** (§7.20) — local-frame vector offsets
+on track-based point references. Version 6 adds **named constants**
+(`let`), **arithmetic expressions** wherever a number is expected, and
+the **bounded `repeat` block** — all resolved at parse time (§7.21), so
+documents remain data. See §12 and `comparison.md` (the v6 roadmap
+decision).
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -159,7 +163,9 @@ deterministic and canonical formatting trivial.
 file         = "wvg" , INTEGER , scene , { top } ;
 scene        = "scene" , NUMBER , NUMBER ;
 
-top          = paint_decl | def_stmt | fill | stroke | outline_fill | guide | group | text_stmt ;
+top          = paint_decl | let_stmt | def_stmt | fill | stroke | outline_fill | guide | group | text_stmt | repeat_stmt ;
+let_stmt     = "let" , IDENT , "=" , expr ;
+repeat_stmt  = "repeat" , IDENT , "=" , expr , "{" , { top } , "}" ;
 def_stmt     = "def" , IDENT , "=" , shape ;
 text_stmt    = "text" , IDENT , "=" , "at" , "=" , point , "content" , "=" , STRING ,
                "size" , "=" , NUMBER , [ "font" , "=" , IDENT ] ,
@@ -271,6 +277,9 @@ polar_ref    = "polar" , "center" , "=" , point , "radius" , "=" , NUMBER ,
 tangent_off  = "tangent" , NUMBER , [ "deg" , NUMBER ] ;
 
 STRING        = '"' , { STRING_CHAR }, '"' ;   (* '"' escaped as \" , backslash as \\ *)
+expr          = term , { ("+" | "-") , term } ;
+term          = factor , { ("*" | "/") , factor } ;
+factor        = NUMBER | IDENT | "(" , expr ")" | ["-" | "+"] , factor ;
 transform_expr = "translate" , NUMBER , NUMBER
                | "rotate" , NUMBER , [ "about" , literal ]
                | "scale" , NUMBER , [ NUMBER ] , [ "about" , literal ]
@@ -298,6 +307,13 @@ Notes:
 - `grid_ref`'s `+` offset accepts a literal point only. The same trailing
   `+ (dx, dy)` on anchor, segment, and between references is the **point
   offset** form (§7.15): the offset applies after the base point resolves.
+- `let_stmt`: a **named constant** (§7.21). The name becomes usable in
+  any numeric position after its declaration; names share one uniqueness
+  space with nodes, paints, and defs.
+- `repeat_stmt`: a **bounded repeat** (§7.21). The index counts 1…n and
+  is in scope inside the body as a number; a `~` in any name inside the
+  body is replaced by the iteration index (`tooth~` → `tooth3`).
+  Repeats may not nest.
 - `tangent_off`: the **tangent offset** — a vector in the local frame of
   the referenced track (§7.20). `tangent len` runs along the direction of
   travel; `tangent len deg a` rotates it `a` degrees clockwise on screen
@@ -307,6 +323,17 @@ Notes:
   distance 40 from the resolved center, at 30 degrees clockwise on screen
   from the +x axis (§7.16). The radius is unrestricted (negative values
   face the opposite direction).
+- **Expressions.** Every NUMBER in the grammar — including coordinates
+  inside literals, percentages, degrees, counts, and indices — may be an
+  `expr`: `+`, `-`, `*`, `/`, parentheses, constant names, and literals,
+  with the usual precedence. Signs are unary operators; the lexer
+  emits `-` and `+` as tokens (negative numbers are unary-minus
+  expressions, not literals). Values must remain finite; division by
+  zero is an error; positions that require an integer reject
+  non-integral results. Constants must be declared before use and are
+  unique across the document's name space (§7.21).
+- **Names may contain `~`** only inside a `repeat` body, where every `~`
+  is replaced by the iteration index (§7.21).
 - `def` declares a named shape at document scope; `use name` is a shape
   that expands to it at resolve time (§7.17).
 - `marker` decorates a stroke with baked arrowheads or bars at the ends of
@@ -324,9 +351,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` through `wvg 5` — the integer is the format version. Each
+`wvg 1` through `wvg 6` — the integer is the format version. Each
 version is strictly additive (§12): every older file is a valid newer
-file. Loaders accept 1–5 and reject anything else.
+file. Loaders accept 1–6 and reject anything else.
 
 ### 5.2 Scene
 
@@ -672,7 +699,9 @@ node or token):
 | Category | Conditions |
 | --- | --- |
 | Syntax | any grammar violation; wrong version; missing/duplicate `scene` |
-| Names | duplicate node, paint, or def name; name collision across kinds; reserved word used as name; unknown `@` reference; unknown `use` def; unknown text font; paint used before declaration |
+| Names | duplicate node, paint, def, or constant name; name collision across kinds; reserved word used as name; unknown `@` reference; unknown `use` def; unknown text font; unknown constant; paint used before declaration |
+| Expressions | division by zero; non-finite result; non-integral value in an integer position |
+| Repeat | nested repeat; count outside 1–1000; `~` in a name outside a repeat body |
 | References | anchor target expands to no shapes (grid guide, `n = 0` generator) or to a compound; segment target is not a polygon/polyline or is out of edge bounds; grid-cell target is not a grid guide; cyclic reference chains; cyclic `def` chains |
 | Shapes | circle/arc/pie/chord radius ≤ 0; arc/pie/chord sweep outside `0 < |sweep| < 360`; ellipse rx or ry ≤ 0; rect size components ≤ 0; polygon with < 3 points or zero shoelace; polyline with < 2 points; path with zero subpaths or an empty subpath; regular_polygon sides < 3; star points < 2 |
 | Generators | along track expands to ≠ 1 shape; polar radius ≤ 0; grid cols or rows < 1 |
@@ -852,6 +881,71 @@ emitted flipped into y-down at the pen position. Kerning is off in v1.
 Font bundles are resolver components: the *syntax* is core, the *glyphs*
 are pluggable with fallback (missing font → placeholder boxes + warning).
 
+### 7.20 Tangent offsets (local frame)
+
+Anchor and segment references may carry a `tangent len [deg a]` clause:
+the resolved point is displaced by `len` units along the track's **unit
+tangent** at that position — the direction of travel (increasing
+percentage), exactly the tangent the track protocol already defines for
+`along` alignment and stroke markers. `deg a` rotates the vector `a`
+degrees **clockwise on screen** before it is applied, so `deg 0` runs
+with the travel direction, `deg 90` is the right-hand normal, and
+`deg 180` runs against it; negative lengths face backward. The clause is
+pure geometry over the existing track protocol — Tier A.
+
+The full application order at one reference is: `from` projection →
+percent → tangent offset → `+ (dx, dy)` literal offset. Corners,
+clamping, and wrap inherit the protocol rules markers use (§7.18).
+Only anchor and segment references carry a frame; grid, between, and
+polar references do not (a between of two anchored points can host a
+tangent clause on its operands instead).
+
+    guide rim = circle center=(100,100) radius=60
+    stroke tick = line p1=@rim 12.5% p2=@rim 12.5% tangent 16 deg 90
+    stroke lead = line p1=@rim 25%  p2=@rim 25%  tangent 24
+
+### 7.21 Constants, expressions, and repeat (parse-time constructs)
+
+Version 6 adds three sugar constructs that never reach the resolved
+document: they are fully expanded while parsing, so the node stream,
+the IR, and every exporter see only concrete numbers and names.
+
+**Named constants.** `let name = expr` binds `name` to a single number.
+Constants may be declared at the top level or inside a group, are
+visible after their declaration, and are unique across the document's
+one name space (shared with nodes, paints, and defs). Anywhere the
+grammar expects a NUMBER, a constant name may appear instead.
+
+**Expressions.** Numbers may be arbitrary closed-form expressions over
+literals and constants with `+ - * /` and parentheses at the usual
+precedence; unary signs are operators. Evaluation is eager, finite, and
+deterministic — division by zero and non-finite results are errors, and
+integer positions (motif counts, grid dimensions, segment indices,
+repeat counts) require integral results.
+
+**Bounded repeat.** `repeat i = expr { top* }` parses its body `n`
+times — `n` the (integral, 1–1000) value of `expr` — with the index
+bound to `1, 2, …, n` in turn. Inside a body, a `~` in any name is
+replaced by the decimal index: `tooth~` names `tooth1`, `tooth2`, …
+and `@tooth~` references them. Repeats may not nest (a later,
+unambiguous placeholder scheme is a v7 candidate). Like group
+transforms (§7.14), the expansion is parse-time: undo semantics,
+editors, and emitters see only the expanded, fully concrete document.
+
+    let R = 50
+    let teeth = 12
+    guide rim = circle center=(100,100) radius=R
+    repeat i = teeth {
+      stroke tick~ = line p1=@rim i% p2=@rim i% tangent 14 deg 90
+        color=#e53935 width=2
+    }
+
+The generated document is byte-identical to writing all twelve ticks
+out; `tick~` becomes `tick1 … tick12`. Editors that mutate geometry
+through the resolved document (handles) materialize the referenced
+values — a dragged `radius=R` circle emits the concrete number, exactly
+like a composed group transform emits a matrix.
+
 --------------------------------------------------------------------------------
 
 ## 8. TinyVG encoding contract
@@ -977,7 +1071,8 @@ the suite.
   `rule=nonzero`, star polygons via skip traversal (`star_polygon`),
   segment references on paths, and path tolerance configuration.
   Markers, symbol defs/use, the text construct, and tangent offsets
-  arrived in v3/v4/v5; dash patterns remain a Tier B candidate.
+  arrived in v3/v4/v5; constants, expressions, and bounded repeat
+  arrived in v6; dash patterns remain a Tier B candidate.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
