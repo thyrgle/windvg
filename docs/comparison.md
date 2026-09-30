@@ -98,7 +98,7 @@ documents from coordinate soups into parameterized drawings, and
 multiplies the value of everything else (generators, defs, tangent
 offsets). Target: v6, before or with `repeat`.
 
-### 3. Curved connectors — `to[out=.., in=..]` (v7)
+### 3. Curved connectors — `to[out=.., in=..]` (SHIPPED in v7)
 
 Diagram work constantly needs "an arc from p to q, leaving at angle a,
 arriving at angle b" (or bulging by X). wvg's path arcs are
@@ -107,13 +107,14 @@ centers today. The answer is an `arc between p q` shape (or a
 `connect` point/edge form) with in/out angles or a bulge parameter —
 small grammar, large ergonomic win. Target: v7.
 
-### 4. Path intersections — `intersections` library (v7)
+### 4. Path intersections — `intersects` library (SHIPPED in v7)
 
 Given two named paths, TikZ computes their crossing points. This is
 *natively* wvg: both operands are already tracks with flattened
-geometry, so an `intersects p q` point form (optionally the k-th
-crossing) reuses the existing segment machinery. Bounded, deterministic,
-conformance-testable. Target: v7.
+geometry, so Shipped in v7 as the `intersects a b [k]` point form: 257-point track
+chains through `point_at_distance`, the normative crossing formula,
+k-th crossing in chain order. Bounded, deterministic, byte-exact across
+hosts.
 
 ### 5. Clipping and masks — `\clip` (Tier B/C; format-review W6)
 
@@ -164,8 +165,8 @@ exclusion is a decision, not drift.
 
 | Version | Theme | Items |
 | --- | --- | --- |
-| v6 | language power | named constants, bounded `repeat` |
-| v7 | geometry | `arc between` connectors, `intersects` point form |
+| v6 | language power | named constants, expressions, bounded `repeat` |
+| v7 | geometry | `arc_between` connectors, `intersects` point form |
 | v-next | rendering (Tier B) | clip/masks, patterns, dashes |
 | v-next | text | rotation, background box, `fit` |
 | — | excluded | plotting, 3-D, auto-layout, macros |
