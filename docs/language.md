@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 4**
+**Version 5**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -8,16 +8,17 @@ shapes' perimeters with anchors, arranges repetitions, and styles the results
 with fills and strokes. It contains no arithmetic, no variables, and no code
 execution — opening a `.wvg` file can never run a program.
 
-Version 4 is strictly additive over versions 1–3: every older file is a
-valid v4 file with identical meaning. Loaders accept 1–4 and reject
+Version 5 is strictly additive over versions 1–4: every older file is a
+valid v5 file with identical meaning. Loaders accept 1–5 and reject
 anything newer. Version 2 added node `transform=` (baked at resolve),
 `group` statements, the `rect`, `pie`, and `chord` shapes, the `between`
 point form, and the `matrix` transform expression. Version 3 added
 **point offsets**, the **polar point form**, **symbol defs and use**, and
-**stroke markers**. Version 4 adds the **text node** (§7.19) and the
+**stroke markers**. Version 4 added the **text node** (§7.19) and the
 **fidelity-tier policy** (§11): text survives in `.wvg` and SVG export;
 TinyVG export of text requires a font-baking host or fails by default.
-See §12.
+Version 5 adds **tangent offsets** (§7.20) — local-frame vector offsets
+on track-based point references. See §12.
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -259,13 +260,15 @@ instruction  = "line" , "to" , "=" , point
 point        = literal | anchor_ref | segment_ref | grid_ref | between_ref | polar_ref ;
 literal      = "(" , NUMBER , "," , NUMBER , ")" ;
 anchor_ref   = "@" , IDENT , [ orientation ] , [ percent ] , [ "from" , literal ] ,
-               [ "+" , literal ] ;
+               [ tangent_off ] , [ "+" , literal ] ;
 percent      = NUMBER , "%" ;
-segment_ref  = "@" , IDENT , "seg" , INTEGER , [ percent ] , [ "+" , literal ] ;
+segment_ref  = "@" , IDENT , "seg" , INTEGER , [ percent ] , [ tangent_off ] ,
+               [ "+" , literal ] ;
 grid_ref     = "@" , IDENT , "[" , INTEGER , "," , INTEGER , "]" , [ "+" , literal ] ;
 between_ref  = "between" , point , point , percent , [ "+" , literal ] ;
 polar_ref    = "polar" , "center" , "=" , point , "radius" , "=" , NUMBER ,
                "deg" , "=" , NUMBER ;
+tangent_off  = "tangent" , NUMBER , [ "deg" , NUMBER ] ;
 
 STRING        = '"' , { STRING_CHAR }, '"' ;   (* '"' escaped as \" , backslash as \\ *)
 transform_expr = "translate" , NUMBER , NUMBER
@@ -295,6 +298,11 @@ Notes:
 - `grid_ref`'s `+` offset accepts a literal point only. The same trailing
   `+ (dx, dy)` on anchor, segment, and between references is the **point
   offset** form (§7.15): the offset applies after the base point resolves.
+- `tangent_off`: the **tangent offset** — a vector in the local frame of
+  the referenced track (§7.20). `tangent len` runs along the direction of
+  travel; `tangent len deg a` rotates it `a` degrees clockwise on screen
+  (`deg 90` is the normal, `deg 180` the reverse tangent). Negative
+  lengths face backward. Valid on anchor and segment references only.
 - `polar_ref`: `polar center=@g 0% radius=40 deg=30` is the point at
   distance 40 from the resolved center, at 30 degrees clockwise on screen
   from the +x axis (§7.16). The radius is unrestricted (negative values
@@ -316,9 +324,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` through `wvg 4` — the integer is the format version. Each
+`wvg 1` through `wvg 5` — the integer is the format version. Each
 version is strictly additive (§12): every older file is a valid newer
-file. Loaders accept 1–4 and reject anything else.
+file. Loaders accept 1–5 and reject anything else.
 
 ### 5.2 Scene
 
@@ -968,8 +976,8 @@ the suite.
   clip paths and masks (Tier B/C — see `format-review.md` §5),
   `rule=nonzero`, star polygons via skip traversal (`star_polygon`),
   segment references on paths, and path tolerance configuration.
-  Markers, symbol defs/use, and the text construct arrived in v3/v4;
-  dash patterns remain a Tier B candidate.
+  Markers, symbol defs/use, the text construct, and tangent offsets
+  arrived in v3/v4/v5; dash patterns remain a Tier B candidate.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
