@@ -1290,7 +1290,7 @@ class Document:
         node.markers = list(markers) if markers else None
 
     def text(
-        self, name: str, at, content: str, size: float = 12.0,
+        self, name: str, at, content: str, size: float = 16.0,
         font: str = "sans", anchor: str = "start", color=None,
         *, visible: bool = True,
     ) -> Node:
