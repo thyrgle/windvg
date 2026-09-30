@@ -18,8 +18,10 @@ plotting. wvg outclasses TikZ in universality (three independent
 implementations agreeing byte-for-byte), in latency (live re-resolution
 in milliseconds on a phone, versus a TeX toolchain compile), and in
 safety (documents are serializable data with no evaluation surface).
-Worked examples of the same drawings in all three languages, with a
-line-count comparison, live in [`../../comparison/`](../../comparison/).
+Worked examples of the same drawings in all three languages — with
+line-count and character-count comparisons ([`count.py`](../../comparison/count.py)
+reproduces the tables) — live in
+[`../../comparison/`](../../comparison/).
 The roadmap exists to close the gaps that matter without giving up any
 of those three properties.
 

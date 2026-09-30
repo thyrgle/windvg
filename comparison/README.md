@@ -30,7 +30,7 @@ flattered.
 | wheel | 7 | 9 | 18 |
 | connectors | 7 | 17 | 10 |
 | labels | 7 | 11 | 8 |
-| **average** | **6.2** | **11.8** | **14.3** |
+| **average** | **6.2** | **11.8** | **14.2** |
 
 ### Reading the numbers honestly
 
@@ -50,9 +50,33 @@ flattered.
   is one line, and the 9 sprinkles are *parameters* (`along … n=9`),
   not nine elements. SVG needs all nine (plus the gradient def).
 
-### What the numbers say
+#### Character count
 
-**wvg wins the average** (6.2 vs 11.8 vs 14.3) and, more importantly,
+Lines reward structure; characters reward terseness, so the same files
+counted by characters (raw, and whitespace-normalized — close to what a
+minifier gets you) tell a more nuanced story:
+
+| drawing | wvg | TikZ | TikZ drawing-only | SVG | SVG normalized |
+|---|---|---|---|---|---|
+| donut | 390 | 291 | 275 | 1258 | 1183 |
+| wheel | 287 | 291 | 281 | 1178 | 1121 |
+| connectors | 459 | 589 | 563 | 708 | 690 |
+| labels | 405 | 336 | 324 | 593 | 580 |
+| **average** | **385** | **376** | **360** | **934** | **893** |
+
+- **vs SVG the win is decisive** — wvg averages ~2.4× fewer characters
+  even against whitespace-normalized SVG.
+- **vs TikZ it is a wash on characters**: strip the LaTeX preamble and
+  TikZ's drawing-only body averages ~360 characters to wvg's 385. TikZ
+  macros are genuinely dense (`(100,100) circle (80)`); wvg spells its
+  semantics out (`center=`, `color=`) and saves its characters where it
+  replaces repetition instead — `along … n=9` instead of nine elements,
+  `intersects` instead of precomputed coordinates.
+
+## What the numbers say
+
+**wvg wins the average** (6.2 vs 11.8 vs 14.2 lines; 385 vs 376 vs
+934 characters) and, more importantly,
 wins the *right* way: the savings come from semantics — tracks,
 generators, parametric points, intersections — not from terser syntax.
 The two places wvg doesn't beat TikZ on lines (preamble aside) are
@@ -64,6 +88,7 @@ calculator already solved.
 
 ## Reproducing
 
+- `python3 count.py` regenerates both tables above from the sources.
 - wvg: resolve/export with the reference implementation, e.g.
   `windvg svg donut/donut.wvg` (writes the rendered SVG).
 - TikZ: `cd donut && pdflatex donut.tex`.
