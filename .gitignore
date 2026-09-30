@@ -2,3 +2,6 @@
 *.aux
 *.log
 compile.log
+
+# Sphinx build output
+docs/_build/
