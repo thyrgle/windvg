@@ -89,6 +89,7 @@ class AnchorPoint:
     start: Point | None = None
     direction: Orientation = Orientation.CW
     offset: tuple | None = None  # (dx, dy), applied after resolution
+    tangent: tuple | None = None  # (len, deg) local-frame displacement (§7.20)
 
     def to_dict(self) -> dict:
         payload: dict = {"node": self.node, "pct": self.pct}
@@ -96,6 +97,8 @@ class AnchorPoint:
             payload["start"] = [self.start.x, self.start.y]
         if self.direction is not Orientation.CW:
             payload["direction"] = _ORIENT[self.direction]
+        if self.tangent is not None:
+            payload["tangent"] = [self.tangent[0], self.tangent[1]]
         if self.offset is not None:
             payload["offset"] = [self.offset[0], self.offset[1]]
         return {"anchor": payload}
@@ -110,6 +113,7 @@ class AnchorPoint:
             pct=payload.get("pct", 0.0),
             start=None if start is None else Point(start[0], start[1]),
             direction=_ORIENT_BACK[payload.get("direction", "cw")],
+            tangent=_tangent_tuple(payload.get("tangent")),
             offset=None if offset is None else (offset[0], offset[1]),
         )
 
@@ -192,9 +196,12 @@ class SegmentPoint:
     index: int
     pct: float = 0.0
     offset: tuple | None = None
+    tangent: tuple | None = None  # (len, deg) local-frame displacement (§7.20)
 
     def to_dict(self) -> dict:
         payload: dict = {"node": self.node, "index": self.index, "pct": self.pct}
+        if self.tangent is not None:
+            payload["tangent"] = [self.tangent[0], self.tangent[1]]
         if self.offset is not None:
             payload["offset"] = [self.offset[0], self.offset[1]]
         return {"segment": payload}
@@ -207,6 +214,7 @@ class SegmentPoint:
             node=payload["node"],
             index=int(payload["index"]),
             pct=float(payload.get("pct", 0.0)),
+            tangent=_tangent_tuple(payload.get("tangent")),
             offset=None if offset is None else (offset[0], offset[1]),
         )
 
@@ -256,6 +264,27 @@ def _offset_xy(offset) -> tuple:
     if hasattr(offset, "x"):
         return (offset.x, offset.y)
     return (offset[0], offset[1])
+
+
+def _tangent_tuple(tangent) -> tuple:
+    """Normalize a tangent offset: ``len`` or ``(len, deg)`` → (len, deg)."""
+    if tangent is None:
+        return None
+    if hasattr(tangent, "__len__"):
+        return (float(tangent[0]), float(tangent[1]))
+    return (float(tangent), 0.0)
+
+
+def _apply_tangent(p: Point, tx: float, ty: float, tangent: tuple) -> Point:
+    """Displace [p] along the unit tangent ``(tx, ty)`` rotated `deg` degrees
+    clockwise on screen, scaled by `len` (§7.20). Canonical op order shared
+    by every host: rotate the unit vector, scale, then add."""
+    length, deg = tangent
+    rad = math.radians(deg)
+    ca, sa = math.cos(rad), math.sin(rad)
+    rx = tx * ca - ty * sa
+    ry = tx * sa + ty * ca
+    return Point(p.x + rx * length, p.y + ry * length)
 
 
 def _point_from_dict(d: list | dict):
@@ -574,7 +603,11 @@ class _Resolver:
         if isinstance(pt, AnchorPoint):
             shape = self.first_shape_of(pt.node)
             hint = pt.start if pt.start is not None else shape.point_at_distance(0.0)
-            p = shape.anchor(hint, pt.direction).point(pt.pct)
+            anchor = shape.anchor(hint, pt.direction)
+            p = anchor.point(pt.pct)
+            if pt.tangent is not None:
+                t = anchor.tangent(pt.pct)
+                p = _apply_tangent(p, t.x, t.y, _tangent_tuple(pt.tangent))
             if pt.offset is not None:
                 p = Point(p.x + pt.offset[0], p.y + pt.offset[1])
             return p
@@ -605,6 +638,16 @@ class _Resolver:
                 )
             t = max(0.0, min(1.0, pt.pct / 100.0))
             p = Point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+            if pt.tangent is not None:
+                dx, dy = b.x - a.x, b.y - a.y
+                length = math.sqrt(dx * dx + dy * dy)
+                if length == 0.0:
+                    raise ValueError(
+                        f"tangent undefined on zero-length segment of {pt.node!r}"
+                    )
+                p = _apply_tangent(
+                    p, dx / length, dy / length, _tangent_tuple(pt.tangent)
+                )
             if pt.offset is not None:
                 p = Point(p.x + pt.offset[0], p.y + pt.offset[1])
             return p
@@ -1230,6 +1273,7 @@ class Document:
         pct: float = 0.0,
         start=None,
         direction: Orientation = Orientation.CW,
+        tangent=None,
         offset=None,
     ) -> AnchorPoint:
         return AnchorPoint(
@@ -1237,6 +1281,7 @@ class Document:
             pct=pct,
             start=None if start is None else _as_point_value(start),
             direction=direction,
+            tangent=_tangent_tuple(tangent),
             offset=None if offset is None else (offset[0], offset[1]),
         )
 
