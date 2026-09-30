@@ -408,10 +408,12 @@ its `=`:
     fill circle (100,100) 80 color=red
 
 The node then receives a deterministic generated name — the shape
-keyword followed by a document-wide counter (`circle1`, `line2`, …),
-sharing the one name space. Anonymous nodes cannot be referenced by
-`@anchors`, `intersects`, or `use`; referencing a missing name remains
-an error. Name what you aim at. `def`, `paint`, `let`, and `guide`
+keyword followed by a per-keyword counter (`circle1`, `circle2`,
+`line3`, …) — sharing the one name space. Generated names are not
+intended to be referenced: they shift when the document is edited.
+Referencing one works (an `@anchor` to `circle1` resolves today) but
+anything load-bearing should carry an explicit name; referencing a
+missing name remains an error. Name what you aim at. `def`, `paint`, `let`, and `guide`
 keep required names. Emitters always write the materialized name, so
 round-trips are stable. Generated names are declaration-order-dependent:
 inserting an anonymous node shifts later generated names, which is

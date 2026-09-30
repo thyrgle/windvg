@@ -27,10 +27,10 @@ flattered.
 | drawing | wvg | TikZ | SVG |
 |---|---|---|---|
 | donut | 4 | 10 | 21 |
-| wheel | 7 | 9 | 18 |
+| wheel | 8 | 9 | 18 |
 | connectors | 7 | 17 | 10 |
 | labels | 7 | 11 | 8 |
-| **average** | **6.2** | **11.8** | **14.2** |
+| **average** | **6.5** | **11.8** | **14.2** |
 
 ### Reading the numbers honestly
 
@@ -58,37 +58,42 @@ minifier gets you) tell a more nuanced story:
 
 | drawing | wvg | TikZ | TikZ drawing-only | SVG | SVG normalized |
 |---|---|---|---|---|---|
-| donut | 390 | 291 | 275 | 1258 | 1183 |
-| wheel | 287 | 291 | 281 | 1178 | 1121 |
-| connectors | 459 | 589 | 563 | 708 | 690 |
-| labels | 405 | 336 | 324 | 593 | 580 |
-| **average** | **385** | **376** | **360** | **934** | **893** |
+| donut | 286 | 291 | 275 | 1258 | 1183 |
+| wheel | 264 | 291 | 281 | 1178 | 1121 |
+| connectors | 392 | 589 | 563 | 708 | 690 |
+| labels | 298 | 336 | 324 | 593 | 580 |
+| **average** | **310** | **376** | **360** | **934** | **893** |
 
-- **vs SVG the win is decisive** — wvg averages ~2.4× fewer characters
+- **vs SVG the win is decisive** — wvg averages ~3× fewer characters
   even against whitespace-normalized SVG.
-- **vs TikZ it is a wash on characters**: strip the LaTeX preamble and
-  TikZ's drawing-only body averages ~360 characters to wvg's 385. TikZ
-  macros are genuinely dense (`(100,100) circle (80)`); wvg spells its
-  semantics out (`center=`, `color=`) and saves its characters where it
-  replaces repetition instead — `along … n=9` instead of nine elements,
-  `intersects` instead of precomputed coordinates.
+- **vs TikZ wvg now wins on both axes**: ~310 characters to TikZ's 360
+  drawing-only (~18% under TikZ's raw file). The v9 ergonomics did it
+  without shrinking clarity: anonymous nodes (name what you aim at),
+  positional shape properties in a documented canonical order, and the
+  v6/v7 semantics (`along`, `intersects`, `arc_between`, constants,
+  `repeat`) that remove repetition rather than punctuation. The wvg
+  files here still read as plain declarative sentences — nothing is
+  abbreviated beyond the defaults table.
 
 ## What the numbers say
 
-**wvg wins the average** (6.2 vs 11.8 vs 14.2 lines; 385 vs 376 vs
-934 characters) and, more importantly,
+**wvg wins the average** (6.5 vs 11.8 vs 14.2 lines; 310 vs 376 vs
+934 characters — and 310 vs 360 against TikZ's drawing-only body) and,
+more importantly,
 wins the *right* way: the savings come from semantics — tracks,
 generators, parametric points, intersections — not from terser syntax.
-The two places wvg doesn't beat TikZ on lines (preamble aside) are
-drawings where TikZ's `\foreach` and polar coordinates do real work;
-that is the gap v6's `repeat` and the v7 geometry closed in wvg's own
-vocabulary. For pure static vector markup, SVG remains the universal
+TikZ remains superb — its `\foreach` and polar coordinates are dense
+and its macro layer is far beyond wvg's scope — but the *everyday*
+drawing now costs fewer lines and fewer characters in wvg. For pure static vector markup, SVG remains the universal
 interchange format — but as an authoring language it repeats geometry a
 calculator already solved.
 
 ## Reproducing
 
 - `python3 count.py` regenerates both tables above from the sources.
+- The wvg sources use v9 ergonomics (anonymous nodes, positional
+  properties); the fully explicit pre-v9 spellings still parse
+  identically if you prefer named properties.
 - wvg: resolve/export with the reference implementation, e.g.
   `windvg svg donut/donut.wvg` (writes the rendered SVG).
 - TikZ: `cd donut && pdflatex donut.tex`.

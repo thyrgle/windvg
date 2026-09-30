@@ -1,5 +1,5 @@
-wvg 6 scene 200 200
+wvg 9 scene 200 200
 
 paint berry = radial center=(100,80) edge=(100,140) center_color=#EF9A9A edge_color=#B71C1C
-fill donut = compound shapes=[circle center=(100,100) radius=80, circle center=(100,100) radius=32] color=berry
-stroke sprinkles = along track=circle center=(100,100) radius=56 motifs=[line p1=(-7,0) p2=(7,0)] n=9 offset_pct=4% align=tangent direction=cw color=#FFFFFF width=4
+fill compound [circle (100,100) 80, circle (100,100) 32] color=berry
+stroke along circle (100,100) 56 [line (-7,0) (7,0)] n=9 offset_pct=4% align=tangent color=#FFF width=4
