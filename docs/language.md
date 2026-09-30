@@ -1,6 +1,6 @@
 # The `.wvg` language specification
 
-**Version 6**
+**Version 7**
 
 `.wvg` is the canonical, human-readable document format for windvg. It is a
 purely declarative language: a `.wvg` file names shapes, ties points to other
@@ -18,11 +18,12 @@ point form, and the `matrix` transform expression. Version 3 added
 **fidelity-tier policy** (§11): text survives in `.wvg` and SVG export;
 TinyVG export of text requires a font-baking host or fails by default.
 Version 5 added **tangent offsets** (§7.20) — local-frame vector offsets
-on track-based point references. Version 6 adds **named constants**
+on track-based point references. Version 6 added **named constants**
 (`let`), **arithmetic expressions** wherever a number is expected, and
 the **bounded `repeat` block** — all resolved at parse time (§7.21), so
-documents remain data. See §12 and `comparison.md` (the v6 roadmap
-decision).
+documents remain data. Version 7 adds the **`arc_between` connector**
+(§7.22) and the **`intersects` point form** (§7.23). See §12 and
+`comparison.md` (the roadmap decisions).
 
 The language is the textual surface of the existing windvg document model.
 Every construct compiles 1:1 to a serializable spec
@@ -215,6 +216,8 @@ shape        = "circle" , "center" , "=" , point , "radius" , "=" , NUMBER
                "ry" , "=" , NUMBER , [ "rotation_deg" , "=" , NUMBER ]
              | "arc" , "center" , "=" , point , "radius" , "=" , NUMBER ,
                "start_deg" , "=" , NUMBER , "sweep_deg" , "=" , NUMBER
+             | "arc_between" , "p1" , "=" , point , "p2" , "=" , point ,
+               "deg" , "=" , NUMBER
              | "rect" , "center" , "=" , point , "size" , "=" , literal
              | "pie" , "center" , "=" , point , "radius" , "=" , NUMBER ,
                "start_deg" , "=" , NUMBER , "sweep_deg" , "=" , NUMBER
@@ -263,7 +266,8 @@ instruction  = "line" , "to" , "=" , point
                "to" , "=" , point
              | "close" ;
 
-point        = literal | anchor_ref | segment_ref | grid_ref | between_ref | polar_ref ;
+point        = literal | anchor_ref | segment_ref | grid_ref | between_ref
+             | polar_ref | intersects_ref ;
 literal      = "(" , NUMBER , "," , NUMBER , ")" ;
 anchor_ref   = "@" , IDENT , [ orientation ] , [ percent ] , [ "from" , literal ] ,
                [ tangent_off ] , [ "+" , literal ] ;
@@ -275,6 +279,7 @@ between_ref  = "between" , point , point , percent , [ "+" , literal ] ;
 polar_ref    = "polar" , "center" , "=" , point , "radius" , "=" , NUMBER ,
                "deg" , "=" , NUMBER ;
 tangent_off  = "tangent" , NUMBER , [ "deg" , NUMBER ] ;
+intersects_ref = "intersects" , IDENT , IDENT , [ INTEGER ] ;
 
 STRING        = '"' , { STRING_CHAR }, '"' ;   (* '"' escaped as \" , backslash as \\ *)
 expr          = term , { ("+" | "-") , term } ;
@@ -319,6 +324,8 @@ Notes:
   travel; `tangent len deg a` rotates it `a` degrees clockwise on screen
   (`deg 90` is the normal, `deg 180` the reverse tangent). Negative
   lengths face backward. Valid on anchor and segment references only.
+- `intersects_ref`: `intersects a b [k]` is the k-th (default 1) crossing
+  of two nodes' tracks (§7.23).
 - `polar_ref`: `polar center=@g 0% radius=40 deg=30` is the point at
   distance 40 from the resolved center, at 30 degrees clockwise on screen
   from the +x axis (§7.16). The radius is unrestricted (negative values
@@ -351,9 +358,9 @@ declarations, fill/stroke/outline-fill nodes, and grid guides.
 
 ### 5.1 Magic and version
 
-`wvg 1` through `wvg 6` — the integer is the format version. Each
+`wvg 1` through `wvg 7` — the integer is the format version. Each
 version is strictly additive (§12): every older file is a valid newer
-file. Loaders accept 1–6 and reject anything else.
+file. Loaders accept 1–7 and reject anything else.
 
 ### 5.2 Scene
 
@@ -702,6 +709,8 @@ node or token):
 | Names | duplicate node, paint, def, or constant name; name collision across kinds; reserved word used as name; unknown `@` reference; unknown `use` def; unknown text font; unknown constant; paint used before declaration |
 | Expressions | division by zero; non-finite result; non-integral value in an integer position |
 | Repeat | nested repeat; count outside 1–1000; `~` in a name outside a repeat body |
+| Arc connectors | `p1 = p2`; sweep zero or |sweep| ≥ 360 |
+| Intersections | unknown node reference; reference with no track; missing k-th crossing |
 | References | anchor target expands to no shapes (grid guide, `n = 0` generator) or to a compound; segment target is not a polygon/polyline or is out of edge bounds; grid-cell target is not a grid guide; cyclic reference chains; cyclic `def` chains |
 | Shapes | circle/arc/pie/chord radius ≤ 0; arc/pie/chord sweep outside `0 < |sweep| < 360`; ellipse rx or ry ≤ 0; rect size components ≤ 0; polygon with < 3 points or zero shoelace; polyline with < 2 points; path with zero subpaths or an empty subpath; regular_polygon sides < 3; star points < 2 |
 | Generators | along track expands to ≠ 1 shape; polar radius ≤ 0; grid cols or rows < 1 |
@@ -946,6 +955,57 @@ through the resolved document (handles) materialize the referenced
 values — a dragged `radius=R` circle emits the concrete number, exactly
 like a composed group transform emits a matrix.
 
+### 7.22 Arc connectors
+
+`arc_between p1=p p2=q deg=θ` is the circular arc that starts at `p`,
+ends at `q`, and subtends θ degrees. The sign of θ is the travel
+direction in the universal screen convention — positive is clockwise —
+so `deg=90` bulges to one side of the chord and `deg=-90` to the other;
+|θ| must lie in (0, 360). The radius is derived from the chord:
+`r = (|q−p|/2) / sin(|θ|/2)`, and the center sits on the chord's
+perpendicular bisector on the side the sweep requires. Canonical
+computation (normative, for cross-host parity), with `c = |q−p|`,
+`u = (q−p)/c`, `mid = (p+q)/2`:
+
+    r  = (c/2) / sin(|θ|·π/360)
+    h  = √(r² − (c/2)²)
+    n  = (−u.y, u.x)
+    center = mid + n·h   if θ > 0   else   mid − n·h
+    start  = atan2(p−center) in degrees;  sweep = θ
+
+The result is an ordinary arc (§7.2): stroke-only, TinyVG-encoded, and
+subject to every arc rule including the fill/outline-fill compile
+error. `p = q` is an error. Endpoints are parametric points — they may
+be anchors, intersections, or anything else — which is what makes this
+the connector form.
+
+    stroke deck = arc_between p1=@a 30% p2=@b 70% deg=90 color=#1e88e5
+
+### 7.23 Path intersections
+
+`intersects a b [k]` resolves to the k-th (default 1) crossing point of
+the tracks of nodes `a` and `b`. Both tracks are sampled as chains:
+257 points each, `dᵢ = i · perimeter/256` for `i = 0…256`, through the
+track protocol's `point_at_distance` (closed tracks wrap, open ones
+clamp). Every chain segment of `a` is tested against every chain
+segment of `b` in order; the standard segment-intersection root is
+accepted when both parameters lie in `[-1e-9, 1+1e-9]` (parallel
+segments are skipped, so collinear overlaps produce no crossings).
+Crossings are counted in chain order — `a`'s segments outer, `b`'s
+inner — and the k-th is returned; a missing k-th crossing is an error.
+
+Sampling and the crossing formula are normative for parity: with
+`d1 = a1→a2` and `d2 = b1→b2`,
+
+    denom = d1.x·d2.y − d1.y·d2.x        skip if |denom| < 1e-12
+    tₐ = ((b1−a1) × d2) / denom
+    t_b = ((b1−a1) × d1) / denom
+    hit  = a1 + tₐ·d1                    when tₐ, t_b ∈ [−1e-9, 1+1e-9]
+
+Touching endpoints count once per segment pair, so corner-touching
+shapes may report the same visual crossing at two indices. A shape
+never intersects itself (`a` and `b` must be different nodes).
+
 --------------------------------------------------------------------------------
 
 ## 8. TinyVG encoding contract
@@ -1072,7 +1132,8 @@ the suite.
   segment references on paths, and path tolerance configuration.
   Markers, symbol defs/use, the text construct, and tangent offsets
   arrived in v3/v4/v5; constants, expressions, and bounded repeat
-  arrived in v6; dash patterns remain a Tier B candidate.
+  arrived in v6; arc connectors and path intersections arrived in v7;
+  dash patterns remain a Tier B candidate.
 
 Python's `Document.generate_code()` (Python-source persistence) remains an
 independent, optional export for generative workflows; `.wvg` is the
