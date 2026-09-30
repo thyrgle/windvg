@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from .geometry import Point
 from .gradient import Color, LinearGradient, Paint, RadialGradient, paint_colors
 from .path import ArcCircle, ArcEllipse, Close, Cubic, Line, Path, Quad
-from .scene import OutlineFillOp, StrokeOp
+from .scene import OutlineFillOp, StrokeOp, TextOp
 from .shapes import Arc, Circle, Compound, Ellipse, Polyline
 
 if TYPE_CHECKING:
@@ -457,16 +457,23 @@ def _emit_op(writer: _Writer, op: Op, index: dict) -> None:
             writer.point(pt)
 
 
-def encode(scene: Scene, scale: int = 4) -> bytes:
+def encode(scene: Scene, scale: int = 4, drop_text: bool = False) -> bytes:
     """Encode a scene as a TinyVG 1.0 binary file.
 
     Operations with ``visible=False`` are skipped entirely, as if they were
-    never added.
+    never added. Text ops (§7.19) are refused by default — TinyVG cannot
+    encode text; pass ``drop_text=True`` to omit them (§11 fidelity tiers).
     """
     if not 0 <= scale <= 15:
         raise ValueError("scale must fit in 4 bits (0..15)")
 
     ops = [op for op in scene.ops if op.visible]
+    if not drop_text and any(isinstance(op, TextOp) for op in ops):
+        raise ValueError(
+            "cannot encode text as TinyVG (fidelity tier B); "
+            "pass drop_text=True to omit text nodes"
+        )
+    ops = [op for op in ops if not isinstance(op, TextOp)]
     coord_range = _choose_coord_range(ops, scale)
     bits = {COORD_DEFAULT: 16, COORD_ENHANCED: 32}[coord_range]
     writer = _Writer(scale, bits)

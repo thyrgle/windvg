@@ -275,7 +275,7 @@ def _point_from_dict(d: list | dict):
 
 
 def _color_to_dict(c: Color) -> dict:
-    return {"kind": "color", "rgba": [c.r, c.g, c.b, c.a]}
+    return {"kind": "color", "rgba": [float(c.r), float(c.g), float(c.b), float(c.a)]}
 
 
 def _paint_to_dict(paint) -> dict:
@@ -483,6 +483,40 @@ class PieSpec:
     start_deg: float
     sweep_deg: float
     chord: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TextSpec:
+    """A text node: string rendered at a resolved baseline point (spec
+    §7.19, fidelity tier B). ``anchor`` is the horizontal alignment:
+    start, middle, or end. ``font`` is a registered family name (v1
+    bundles ``sans``). Glyph baking is engine-local."""
+
+    at: object
+    content: str
+    size: float
+    font: str = "sans"
+    anchor: str = "start"  # start | middle | end
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": "text",
+            "at": _point_to_dict(self.at),
+            "content": self.content,
+            "size": self.size,
+            "font": self.font,
+            "anchor": self.anchor,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> TextSpec:
+        return TextSpec(
+            at=_point_from_dict(d["at"]),
+            content=d["content"],
+            size=float(d["size"]),
+            font=d.get("font", "sans"),
+            anchor=d.get("anchor", "start"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -915,6 +949,8 @@ def _spec_to_dict(spec) -> dict:
         }
     if isinstance(spec, UseSpec):
         return {"kind": "use", "def": spec.def_name}
+    if isinstance(spec, TextSpec):
+        return spec.to_dict()
     raise TypeError(f"cannot serialize shape spec {type(spec).__name__}")
 
 
@@ -997,7 +1033,52 @@ def _spec_from_dict(d: dict):
         return TransformSpec(tuple(float(v) for v in d["t"]), _spec_from_dict(d["shape"]))
     if kind == "use":
         return UseSpec(d["def"])
+    if kind == "text":
+        return TextSpec(
+            at=_point_from_dict(d["at"]),
+            content=d["content"],
+            size=float(d["size"]),
+            font=d.get("font", "sans"),
+            anchor=d.get("anchor", "start"),
+        )
     raise ValueError(f"unknown shape spec kind {kind}")
+
+
+def _resolve_text_node(resolver, scene, node) -> None:
+    """Resolve a text node into a TextOp with baked glyph outlines (§7.19)."""
+    from .textfont import bake, measure
+
+    spec = node.shape
+    at = resolver.resolve_point(spec.at)
+    width = measure(spec.content, spec.size, spec.font)
+    shapes = tuple(bake(at, spec.content, spec.size, spec.font, spec.anchor))
+    scene.text(
+        spec.content, at, spec.size, node.paint,
+        spec.font, spec.anchor, shapes, width,
+    )
+
+
+def _text_json_entry(resolver, node) -> dict:
+    """Metadata-only resolved entry for text nodes (no baked outlines)."""
+    from .textfont import ANCHOR_OFFSET, measure
+
+    spec = node.shape
+    at = resolver.resolve_point(spec.at)
+    width = measure(spec.content, spec.size, spec.font)
+    pen_x = at.x - width * ANCHOR_OFFSET.get(spec.anchor, 0.0)
+    bbox = [pen_x, at.y - 0.8 * spec.size, pen_x + width, at.y + 0.2 * spec.size]
+    return {
+        "id": node.id,
+        "op": "text",
+        "at": [at.x, at.y],
+        "content": spec.content,
+        "size": spec.size,
+        "font": spec.font,
+        "anchor": spec.anchor,
+        "width": width,
+        "paint": _paint_to_dict(node.paint),
+        "bbox": bbox,
+    }
 
 
 def _marker_polygons(shape: Shape, marker) -> list[Polygon]:
@@ -1051,6 +1132,23 @@ class Document:
         """Attach markers (spec §7.18) to a stroke node by name or id."""
         node = self.get(node_ref)
         node.markers = list(markers) if markers else None
+
+    def text(
+        self, name: str, at, content: str, size: float = 12.0,
+        font: str = "sans", anchor: str = "start", color=None,
+        *, visible: bool = True,
+    ) -> Node:
+        return self._add(
+            Node(
+                self._new_id(),
+                self._unique_name(name),
+                "text",
+                TextSpec(at=_as_point_value(at), content=content, size=size,
+                         font=font, anchor=anchor),
+                color if color is not None else BLACK,
+                visible,
+            )
+        )
 
     def define(self, name: str, shape) -> None:
         """Declare a document-scope shape for ``use`` (spec §7.17)."""
@@ -1214,6 +1312,9 @@ class Document:
                 raise ValueError(
                     f"markers are only valid on stroke nodes ({node.name!r})"
                 )
+            if node.op == "text":
+                _resolve_text_node(resolver, scene, node)
+                continue
             for shape in resolver.expand(node.shape):
                 if node.op == "fill":
                     scene.fill(shape, node.paint)
@@ -1236,6 +1337,9 @@ class Document:
         out = []
         for node in self.nodes:
             if not node.visible:
+                continue
+            if node.op == "text":
+                out.append(_text_json_entry(resolver, node))
                 continue
             for shape in resolver.expand(node.shape):
                 lo, hi = shape.bbox()
@@ -1466,6 +1570,12 @@ def _spec_expr(spec) -> str:
         return f"wvd.TransformSpec(t=({t}), shape={_spec_expr(spec.shape)})"
     if isinstance(spec, UseSpec):
         return f"wvd.UseSpec({spec.def_name!r})"
+    if isinstance(spec, TextSpec):
+        return (
+            f"wvd.TextSpec(at={_point_spec_expr(spec.at)},"
+            f" content={spec.content!r}, size={_fmt(spec.size)},"
+            f" font={spec.font!r}, anchor={spec.anchor!r})"
+        )
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
 
@@ -1637,7 +1747,7 @@ def _shape_expr(spec) -> str:
         return (
             f"wvd.RoundedSpec(shape={_shape_expr(spec.shape)}, radius={_fmt(spec.radius)})"
         )
-    if isinstance(spec, (RectSpec, PieSpec, TransformSpec, UseSpec)):
+    if isinstance(spec, (RectSpec, PieSpec, TransformSpec, UseSpec, TextSpec)):
         return _spec_expr(spec)
     raise TypeError(f"cannot generate code for spec {type(spec).__name__}")
 
@@ -1677,6 +1787,15 @@ def _generate_code(doc: Document) -> str:
                 f"doc.grid({node.name!r}, origin=({_fmt(origin.x)}, {_fmt(origin.y)}),"
                 f" cols={shape.cols}, rows={shape.rows},"
                 f" dx={_fmt(shape.dx)}, dy={_fmt(shape.dy)})"
+            )
+            continue
+        if isinstance(shape, TextSpec):
+            vis = ", visible=False" if not node.visible else ""
+            lines.append(
+                f"doc.text({node.name!r}, at={_point_spec_expr(shape.at)},"
+                f" content={shape.content!r}, size={_fmt(shape.size)},"
+                f" font={shape.font!r}, anchor={shape.anchor!r},"
+                f" color={_paint_expr(node.paint)}{vis})"
             )
             continue
         call_args = [repr(node.name), _shape_expr(node.shape), _paint_expr(node.paint)]

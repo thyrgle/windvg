@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .color import Color
+from .geometry import Point
 from .gradient import Paint
 from .shapes import Shape
 
@@ -34,7 +35,27 @@ class OutlineFillOp:
     visible: bool = True
 
 
-Op = FillOp | StrokeOp | OutlineFillOp
+@dataclass(frozen=True, slots=True)
+class TextOp:
+    """A text draw op (spec §7.19, fidelity tier B).
+
+    Carries the live string metadata for SVG export/editors plus the
+    engine-baked glyph outlines ([shapes], paths in canvas space). The
+    baked geometry is exempt from cross-host conformance; TinyVG
+    encoding refuses text unless the host explicitly drops it."""
+
+    content: str
+    at: Point
+    size: float
+    font: str
+    anchor: str
+    color: Color
+    shapes: tuple = ()
+    width: float = 0.0
+    visible: bool = True
+
+
+Op = FillOp | StrokeOp | OutlineFillOp | TextOp
 
 
 class Scene:
@@ -82,13 +103,30 @@ class Scene:
             raise ValueError("outline width must be non-negative")
         self.ops.append(OutlineFillOp(shape, color, outline_color, float(width), visible))
 
-    def to_tinyvg(self, scale: int = 4) -> bytes:
+    def text(
+        self,
+        content: str,
+        at: Point,
+        size: float,
+        color: Paint,
+        font: str = "sans",
+        anchor: str = "start",
+        shapes: tuple = (),
+        width: float = 0.0,
+        visible: bool = True,
+    ) -> None:
+        self.ops.append(
+            TextOp(content, at, float(size), font, anchor, color, shapes,
+                   float(width), visible)
+        )
+
+    def to_tinyvg(self, scale: int = 4, drop_text: bool = False) -> bytes:
         from .tinyvg import encode
 
-        return encode(self, scale=scale)
+        return encode(self, scale=scale, drop_text=drop_text)
 
-    def write_tinyvg(self, path: str, scale: int = 4) -> None:
-        Path(path).write_bytes(self.to_tinyvg(scale=scale))
+    def write_tinyvg(self, path: str, scale: int = 4, drop_text: bool = False) -> None:
+        Path(path).write_bytes(self.to_tinyvg(scale=scale, drop_text=drop_text))
 
     def to_svg(self) -> str:
         from .svg import encode

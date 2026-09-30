@@ -13,8 +13,15 @@ from .color import Color
 from .geometry import Point
 from .gradient import LinearGradient
 from .path import ArcCircle, ArcEllipse, Close, Cubic, Line, Path, Quad
-from .scene import FillOp, OutlineFillOp, StrokeOp
+from .scene import FillOp, OutlineFillOp, StrokeOp, TextOp
 from .shapes import Arc, Circle, Compound, Ellipse, Polyline
+from .textfont import ANCHOR_OFFSET
+
+_FONT_FAMILY = {"sans": "Noto Sans"}
+
+
+def _escape_text(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 if TYPE_CHECKING:
     from .scene import Op, Scene
@@ -150,6 +157,14 @@ def _shape_to_d(shape) -> str:
 
 
 def _encode_op(op: Op, ids: dict) -> str:
+    if isinstance(op, TextOp):
+        x = op.at.x - op.width * ANCHOR_OFFSET.get(op.anchor, 0.0)
+        return (
+            f'<text x="{_fmt(x)}" y="{_fmt(op.at.y)}"'
+            f' font-family="{_FONT_FAMILY.get(op.font, op.font)}"'
+            f' font-size="{_fmt(op.size)}" text-anchor="{op.anchor}"'
+            f' {_fill_attrs(op.color, ids)}>{_escape_text(op.content)}</text>'
+        )
     shape = op.shape
     if isinstance(shape, Compound):
         d = " ".join(_shape_to_d(sub) for sub in shape.shapes)
